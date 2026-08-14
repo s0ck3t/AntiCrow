@@ -33,13 +33,20 @@ vi.mock('child_process', () => ({
 }));
 
 // fs モック
+const { mockExistsSync, mockReaddirSync, mockStatSync, mockRmSync } = vi.hoisted(() => ({
+    mockExistsSync: vi.fn((..._args: any[]) => true),
+    mockReaddirSync: vi.fn((..._args: any[]) => []),
+    mockStatSync: vi.fn((..._args: any[]) => ({ mtimeMs: Date.now() })),
+    mockRmSync: vi.fn((..._args: any[]) => undefined),
+}));
 vi.mock('fs', () => ({
-    existsSync: vi.fn(() => true),
+    existsSync: mockExistsSync,
     mkdirSync: vi.fn(),
-    rmSync: vi.fn(),
+    rmSync: mockRmSync,
     readFileSync: vi.fn(() => ''),
     writeFileSync: vi.fn(),
-    readdirSync: vi.fn(() => []),
+    readdirSync: mockReaddirSync,
+    statSync: mockStatSync,
     watch: vi.fn(() => ({
         on: vi.fn(),
         close: vi.fn(),
@@ -49,9 +56,19 @@ vi.mock('fs', () => ({
 // subagentIpc モック
 const mockWritePrompt = vi.fn();
 const mockWatchResponse = vi.fn();
+const mockWatchReady = vi.fn().mockResolvedValue(true);
+const mockIsAgentAliveIpc = vi.fn().mockReturnValue(false);
+const mockCleanupAgentIpc = vi.fn();
+const mockWriteReady = vi.fn();
+const mockWriteHeartbeat = vi.fn();
 vi.mock('../subagentIpc', () => ({
     writePrompt: (...args: any[]) => mockWritePrompt(...args),
     watchResponse: (...args: any[]) => mockWatchResponse(...args),
+    watchReady: (...args: any[]) => mockWatchReady(...args),
+    isAgentAliveIpc: (...args: any[]) => mockIsAgentAliveIpc(...args),
+    cleanupAgentIpc: (...args: any[]) => mockCleanupAgentIpc(...args),
+    writeReady: (...args: any[]) => mockWriteReady(...args),
+    writeHeartbeat: (...args: any[]) => mockWriteHeartbeat(...args),
 }));
 
 // cdpBridge モック
@@ -188,7 +205,7 @@ describe('SubagentHandle', () => {
         it('READY 以外の状態でエラーを投げる', async () => {
             const { handle } = createHandle();
             // 状態は IDLE
-            await expect(handle.sendPrompt('test')).rejects.toThrow('READY 状態でのみ');
+            await expect(handle.sendPrompt('test')).rejects.toThrow('can only be called in READY state');
         });
     });
 
@@ -200,7 +217,7 @@ describe('SubagentHandle', () => {
         it('READY 以外の状態でエラーを投げる', async () => {
             const { handle } = createHandle();
             // 状態は IDLE
-            await expect(handle.sendPromptFireAndForget('test')).rejects.toThrow('READY 状態でのみ');
+            await expect(handle.sendPromptFireAndForget('test')).rejects.toThrow('can only be called in READY state');
         });
 
         it('READY 状態で正常にプロンプトを送信し、状態を BUSY にする', async () => {
@@ -287,6 +304,8 @@ describe('SubagentHandle', () => {
     describe('spawn', () => {
         it('IDLE 以外の状態でエラーを投げる', async () => {
             const { handle } = createHandle();
+            mockWatchReady.mockResolvedValue(false);
+            mockDiscoverInstances.mockResolvedValue([]);
 
             // spawn を呼んで IDLE → CREATING に遷移（タイムアウトで FAILED に）
             await expect(handle.spawn()).rejects.toThrow();
@@ -310,13 +329,22 @@ describe('SubagentHandle', () => {
     });
 
     // -----------------------------------------------------------------------
-    // matchesSubagent（間接テスト: isAlive 経由）
+    // isAlive
     // -----------------------------------------------------------------------
 
     describe('isAlive', () => {
-        it('一致するインスタンスが見つかれば true を返す', async () => {
-            const { handle } = createHandle({ name: 'alive-agent' });
+        it('IPC ハートビートが有効なら true を返す', async () => {
+            const { handle } = createHandle({ name: 'ipc-alive-agent' });
+            mockIsAgentAliveIpc.mockReturnValue(true);
 
+            const result = await handle.isAlive();
+            expect(result).toBe(true);
+            expect(mockIsAgentAliveIpc).toHaveBeenCalledWith(expect.any(String), 'ipc-alive-agent', 30000);
+        });
+
+        it('IPC が無効でも一致する CDP インスタンスが見つかれば true を返す', async () => {
+            const { handle } = createHandle({ name: 'alive-agent' });
+            mockIsAgentAliveIpc.mockReturnValue(false);
             mockDiscoverInstances.mockResolvedValue([
                 { title: 'alive-agent — Antigravity', port: 9000 },
             ]);
@@ -328,7 +356,7 @@ describe('SubagentHandle', () => {
 
         it('一致するインスタンスがなければ false を返す', async () => {
             const { handle } = createHandle({ name: 'dead-agent' });
-
+            mockIsAgentAliveIpc.mockReturnValue(false);
             mockDiscoverInstances.mockResolvedValue([
                 { title: 'other-agent — Antigravity', port: 9000 },
             ]);
@@ -340,10 +368,68 @@ describe('SubagentHandle', () => {
 
         it('CDP エラー時に false を返す', async () => {
             const { handle } = createHandle();
+            mockIsAgentAliveIpc.mockReturnValue(false);
             mockDiscoverInstances.mockRejectedValue(new Error('CDP unavailable'));
 
             const result = await handle.isAlive();
             expect(result).toBe(false);
         });
     });
+
+    // -----------------------------------------------------------------------
+    // cleanupOrphanDummyFolders
+    // -----------------------------------------------------------------------
+
+    describe('cleanupOrphanDummyFolders', () => {
+        it('subwindows ディレクトリが存在しない場合は 0 を返す', () => {
+            mockExistsSync.mockReturnValueOnce(false);
+            const count = SubagentHandle.cleanupOrphanDummyFolders('/test/repo');
+            expect(count).toBe(0);
+        });
+
+        it('2分以内の最近のフォルダはスキップし、2分以上前の古いフォルダのみ削除する', () => {
+            mockExistsSync.mockReturnValue(true);
+            mockReaddirSync
+                .mockReturnValueOnce([
+                    { name: 'active-agent-1', isDirectory: () => true },
+                    { name: 'old-agent-2', isDirectory: () => true },
+                ] as any)
+                .mockReturnValueOnce(['active-agent-1'] as any); // 2回目の readdirSync: 1件残っている
+
+            const now = Date.now();
+            mockStatSync.mockImplementation(((p: string) => {
+                if (p.includes('active-agent-1')) {
+                    return { mtimeMs: now - 30_000 }; // 30秒前（スキップ対象）
+                }
+                return { mtimeMs: now - 300_000 }; // 5分前（削除対象）
+            }) as any);
+
+            const count = SubagentHandle.cleanupOrphanDummyFolders('/test/repo');
+            expect(count).toBe(1);
+            expect(mockRmSync).toHaveBeenCalledWith(
+                expect.stringContaining('old-agent-2'),
+                { recursive: true, force: true }
+            );
+        });
+
+        it('すべてのフォルダが削除されて空になった場合は subwindows ディレクトリ自体も削除する', () => {
+            mockExistsSync.mockReturnValue(true);
+            mockReaddirSync
+                .mockReturnValueOnce([
+                    { name: 'old-agent-1', isDirectory: () => true },
+                ] as any)
+                .mockReturnValueOnce([] as any); // 空
+
+            mockStatSync.mockReturnValue({ mtimeMs: Date.now() - 300_000 } as any); // 5分前
+
+            const count = SubagentHandle.cleanupOrphanDummyFolders('/test/repo');
+            expect(count).toBe(1);
+            expect(mockRmSync).toHaveBeenCalledWith(
+                expect.stringContaining('subwindows'),
+                { recursive: true, force: true }
+            );
+        });
+    });
 });
+
+

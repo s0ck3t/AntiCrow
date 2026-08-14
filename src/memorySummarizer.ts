@@ -22,28 +22,29 @@ export const RECENT_ENTRY_COUNT = 5;
 /** 要約の最大文字数 */
 export const MAX_SUMMARY_CHARS = 1000;
 
-/** 要約セクションのヘッダー */
-const SUMMARY_SECTION_HEADER = '## 過去の記憶（要約）';
+/** Summary section header */
+export const SUMMARY_SECTION_HEADER = '## Past Memories (Summary)';
+const LEGACY_SUMMARY_SECTION_HEADER = '## 過去の記憶（要約）';
 
-/** エントリの区切りパターン */
+/** Entry delimiter pattern */
 const ENTRY_PATTERN = /(?=^### \d{4}-\d{2}-\d{2})/m;
 
-/** 二重実行防止用フラグ */
+/** Concurrent execution lock */
 let summarizing = false;
 
 // -------------------------------------------------------------------------
 // Types
 // -------------------------------------------------------------------------
 
-/** サマライズに必要な CDP/IPC 操作インターフェース */
+/** CDP/IPC operation interface for summarisation */
 export interface SummarizeOps {
-    /** Antigravity にプロンプトを送信する */
+    /** Send prompt to Antigravity */
     sendPrompt: (prompt: string) => Promise<void>;
-    /** FileIpc のレスポンスパスを生成する */
+    /** Generate FileIpc response path */
     createMarkdownRequestId: (wsName?: string) => { requestId: string; responsePath: string };
-    /** レスポンスを待機する */
+    /** Wait for response */
     waitForResponse: (responsePath: string, timeoutMs: number) => Promise<string>;
-    /** 一時ファイルを削除する */
+    /** Clean up temporary files */
     cleanupTmpFiles?: (excludeFiles?: string[]) => Promise<void>;
 }
 
@@ -52,21 +53,18 @@ export interface SummarizeOps {
 // -------------------------------------------------------------------------
 
 /**
- * MEMORY.md のサイズをチェックし、閾値を超えていればサマライズを実行する。
- * 二重実行を防止するロック機構付き。fire-and-forget で呼び出して良い。
+ * Checks MEMORY.md size and triggers summarisation if threshold is exceeded.
  */
 export async function trySummarizeIfNeeded(
     filePath: string,
     label: string,
     ops: SummarizeOps,
 ): Promise<void> {
-    // サイズチェック
     try {
         const stat = fs.statSync(filePath);
         if (stat.size <= SUMMARIZE_THRESHOLD_BYTES) { return; }
     } catch { return; }
 
-    // 二重実行防止
     if (summarizing) {
         logDebug(`memorySummarizer: already summarizing, skipping for ${label}`);
         return;
@@ -83,7 +81,7 @@ export async function trySummarizeIfNeeded(
 }
 
 /**
- * MEMORY.md を分割し、古いエントリを Antigravity に要約させて再構成する。
+ * Splits MEMORY.md, prompts Antigravity to summarise old entries, and rebuilds the file.
  */
 async function doSummarize(
     filePath: string,
@@ -100,16 +98,13 @@ async function doSummarize(
         return;
     }
 
-    // 古いエントリのテキストを連結
     const oldText = oldEntries.join('\n').trim();
     logDebug(`memorySummarizer: ${oldEntries.length} old entries (${oldText.length} chars), ${recentEntries.length} recent entries`);
 
-    // 既存の要約があれば、それも含めて再要約
     const contextPrefix = existingSummary
-        ? `以下は過去の要約です。これも含めて全体を再要約してください:\n${existingSummary}\n\n以下は追加の古い記憶です:\n`
+        ? `The following is a past summary. Please re-summarise the entire content including this:\n${existingSummary}\n\nThe following are additional old memories:\n`
         : '';
 
-    // Antigravity に要約を依頼
     const summaryText = await requestSummaryFromAntigravity(
         contextPrefix + oldText,
         label,
@@ -121,7 +116,6 @@ async function doSummarize(
         return;
     }
 
-    // MEMORY.md を再構成
     const newContent = rebuildMemoryContent(header, summaryText, recentEntries);
     fs.writeFileSync(filePath, newContent, 'utf-8');
     logDebug(`memorySummarizer: summarized ${label} memory — old ${oldEntries.length} entries → ${summaryText.length} chars summary`);
@@ -132,7 +126,7 @@ async function doSummarize(
 // -------------------------------------------------------------------------
 
 /**
- * MEMORY.md の内容を解析して分割する。
+ * Parses and splits MEMORY.md content.
  */
 export function splitMemoryContent(content: string): {
     header: string;
@@ -140,13 +134,17 @@ export function splitMemoryContent(content: string): {
     recentEntries: string[];
     existingSummary: string | null;
 } {
-    // 既存の要約セクションを抽出・除去
     let existingSummary: string | null = null;
     let cleanContent = content;
 
-    const summaryStart = content.indexOf(SUMMARY_SECTION_HEADER);
+    let summaryStart = content.indexOf(SUMMARY_SECTION_HEADER);
+    let matchedHeader = SUMMARY_SECTION_HEADER;
+    if (summaryStart === -1) {
+        summaryStart = content.indexOf(LEGACY_SUMMARY_SECTION_HEADER);
+        matchedHeader = LEGACY_SUMMARY_SECTION_HEADER;
+    }
+
     if (summaryStart !== -1) {
-        // 要約セクションの終了位置を探す（次の ## or ### で始まる行）
         const afterHeader = content.indexOf('\n', summaryStart);
         if (afterHeader !== -1) {
             const rest = content.substring(afterHeader + 1);
@@ -161,12 +159,10 @@ export function splitMemoryContent(content: string): {
         }
     }
 
-    // エントリで分割
     const parts = cleanContent.split(ENTRY_PATTERN);
-    const header = parts[0]; // ヘッダー部分（タイトル等）
+    const header = parts[0];
     const allEntries = parts.slice(1);
 
-    // 直近 N 件を保持
     const splitIdx = Math.max(0, allEntries.length - RECENT_ENTRY_COUNT);
     const oldEntries = allEntries.slice(0, splitIdx);
     const recentEntries = allEntries.slice(splitIdx);
@@ -175,7 +171,7 @@ export function splitMemoryContent(content: string): {
 }
 
 /**
- * 要約テキストと直近エントリからMEMORY.mdの内容を再構成する。
+ * Rebuilds MEMORY.md content from header, summary text, and recent entries.
  */
 export function rebuildMemoryContent(
     header: string,
@@ -195,73 +191,64 @@ export function rebuildMemoryContent(
 }
 
 /**
- * Antigravity に古い記憶の要約を依頼する。
+ * Requests old memory summarisation from Antigravity.
  */
 async function requestSummaryFromAntigravity(
     oldText: string,
     label: string,
     ops: SummarizeOps,
 ): Promise<string | null> {
-    const TIMEOUT_MS = 180_000; // 3分タイムアウト
+    const TIMEOUT_MS = 180_000; // 3 min timeout
 
-    // レスポンス用のファイルパスを生成
     const { responsePath } = ops.createMarkdownRequestId();
-
-    // 要約プロンプトを構築
     const prompt = buildSummarizePrompt(oldText, responsePath);
 
-    // 一時ファイルに書き出し
     const tmpPath = responsePath.replace(/_response\.md$/, '_summary_prompt.txt');
     fs.writeFileSync(tmpPath, prompt, 'utf-8');
     logDebug(`memorySummarizer: summary prompt written to ${tmpPath}`);
 
     try {
-        // view_file 形式の1行指示で送信
-        const instruction = `以下のファイルを view_file ツールで読み込み、その指示に従ってください。ファイルパス: ${tmpPath}`;
+        const instruction = `Please read the following file using the view_file tool and follow its instructions. File path: ${tmpPath}`;
         await ops.sendPrompt(instruction);
         logDebug(`memorySummarizer: summary prompt sent to Antigravity for ${label}`);
 
-        // レスポンスを待機
         const response = await ops.waitForResponse(responsePath, TIMEOUT_MS);
         logDebug(`memorySummarizer: received summary response (${response.length} chars) for ${label}`);
 
-        // レスポンスから要約テキストを抽出（Markdown として扱う）
         const summary = response.trim();
         if (summary.length === 0) { return null; }
 
-        // 長すぎる場合は切り詰め
         if (summary.length > MAX_SUMMARY_CHARS * 1.5) {
-            return summary.substring(0, MAX_SUMMARY_CHARS) + '\n\n（要約が長すぎたため切り詰めました）';
+            return summary.substring(0, MAX_SUMMARY_CHARS) + '\n\n(Summary truncated due to excessive length)';
         }
         return summary;
     } catch (e) {
         logWarn(`memorySummarizer: Antigravity summary request failed for ${label}: ${e instanceof Error ? e.message : e}`);
         return null;
     } finally {
-        // 一時ファイル削除
         try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
     }
 }
 
 /**
- * 要約プロンプトを構築する。
+ * Builds summarisation prompt.
  */
 function buildSummarizePrompt(oldText: string, responsePath: string): string {
     return `{
     "task": "memory_summarize",
-    "instruction": "以下の古い記憶エントリを日本語で ${MAX_SUMMARY_CHARS} 文字以内に要約してください。",
+    "instruction": "Summarise the following old memory entries in concise English within ${MAX_SUMMARY_CHARS} characters.",
     "constraints": [
-        "重要な技術的決定、バグ修正パターン、設計原則を優先的に残す",
-        "日付情報は省略して内容の本質のみを簡潔にまとめる",
-        "箇条書き形式で、カテゴリごとにグループ化する",
-        "出力は要約テキストのみ。前置きや説明は不要",
-        "${MAX_SUMMARY_CHARS} 文字以内に収めること"
+        "Prioritise retaining key technical decisions, bug fix patterns, and architectural principles",
+        "Omit specific dates and summarise the essence of the lessons learned concisely",
+        "Format as bullet points, grouped logically by category",
+        "Output the summary text only, without conversational preamble or closing remarks",
+        "Keep within ${MAX_SUMMARY_CHARS} characters"
     ],
     "old_entries": ${JSON.stringify(oldText)},
     "output": {
         "method": "write_to_file",
         "path": ${JSON.stringify(responsePath)},
-        "format": "要約テキストのみを書き込むこと。JSONではなくプレーンテキスト（Markdown箇条書き）で出力。"
+        "format": "Write summary text only. Output as plain text (Markdown bullet points), not JSON."
     }
 }`;
 }

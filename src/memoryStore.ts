@@ -83,11 +83,11 @@ export function readCombinedMemory(workspacePath?: string): string | null {
 
     const parts: string[] = [];
     if (global) {
-        parts.push(`## グローバル記憶\n${global}`);
+        parts.push(`## Global Memory\n${global}`);
     }
     if (workspace) {
         const wsName = workspacePath ? path.basename(workspacePath) : 'unknown';
-        parts.push(`## ワークスペース記憶（${wsName}）\n${workspace}`);
+        parts.push(`## Workspace Memory (${wsName})\n${workspace}`);
     }
     return parts.join('\n\n');
 }

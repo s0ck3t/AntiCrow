@@ -5,7 +5,7 @@
 // CdpBridge クラスのメソッドからはこれらの関数を委譲呼び出しする。
 // ---------------------------------------------------------------------------
 
-import { logDebug, logWarn } from './logger';
+import { logDebug, logWarn, logError } from './logger';
 import { CascadePanelError } from './errors';
 import { CdpConnection } from './cdpConnection';
 
@@ -27,10 +27,88 @@ export interface PromptSenderContext {
 }
 
 // ---------------------------------------------------------------------------
+// switchOrStartProjectConversation
+// ---------------------------------------------------------------------------
+
+/**
+ * 特定のワークスペース/プロジェクトに対応する会話セッションに切り替える（または新規作成する）。
+ */
+export async function switchOrStartProjectConversation(
+    ctx: PromptSenderContext,
+    workspaceName?: string,
+    forceNewChat = false,
+): Promise<boolean> {
+    if (!workspaceName) { return false; }
+    try {
+        await ctx.conn.connect();
+        const script = `
+        (function() {
+            const targetWs = ${JSON.stringify(workspaceName)}.toLowerCase();
+            
+            // 1. プロジェクトカード (button[data-project-card="true"]) を検索
+            const cards = Array.from(document.querySelectorAll('button[data-project-card="true"]'));
+            const card = cards.find(c => {
+                const txt = (c.innerText || c.textContent || '').trim().toLowerCase();
+                return txt === targetWs || txt.includes(targetWs);
+            });
+            
+            if (!card) {
+                return { success: false, reason: 'project card not found' };
+            }
+
+            // 2. プロジェクトコンテナ要素を取得
+            let container = card.parentElement;
+            while (container && container.parentElement && container.parentElement !== document.body) {
+                if (container.querySelector('[aria-label="New Conversation in Project"]')) break;
+                container = container.parentElement;
+            }
+            if (!container) {
+                container = card.parentElement || card;
+            }
+
+            const newLink = container.querySelector('[aria-label="New Conversation in Project"]');
+            const targetHref = newLink ? newLink.getAttribute('href') : null;
+
+            if (targetHref) {
+                if (!${forceNewChat} && window.location.href.includes(targetHref)) {
+                    return { success: true, method: 'already_on_section', href: targetHref };
+                }
+                window.location.href = targetHref;
+                return { success: true, method: 'navigated_to_section', href: targetHref };
+            }
+
+            card.click();
+            return { success: true, method: 'card_click' };
+        })()
+        `;
+        const res = await ctx.conn.evaluate(script) as { success: boolean; method?: string; href?: string; reason?: string };
+        if (res?.success) {
+            logDebug(`CDP: switchOrStartProjectConversation for "${workspaceName}" succeeded via ${res.method} (${res.href || 'no-href'})`);
+            await ctx.sleep(1500);
+            ctx.resetCascadeContext();
+            return true;
+        } else {
+            logWarn(`CDP: switchOrStartProjectConversation for "${workspaceName}" failed: ${res?.reason}`);
+        }
+    } catch (e) {
+        logError(`CDP: switchOrStartProjectConversation failed`, e);
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // startNewChat
 // ---------------------------------------------------------------------------
 
-export async function startNewChat(ctx: PromptSenderContext): Promise<void> {
+export async function startNewChat(ctx: PromptSenderContext, workspaceName?: string): Promise<void> {
+    if (workspaceName) {
+        const switched = await switchOrStartProjectConversation(ctx, workspaceName, true);
+        if (switched) {
+            logDebug(`CDP: startNewChat — started new conversation for project "${workspaceName}"`);
+            return;
+        }
+    }
+
     // 優先: VSCode コマンド（ターゲットウィンドウ内で実行）
     try {
         const evalJs = `
@@ -100,63 +178,35 @@ async function waitForCascadeIdle(ctx: PromptSenderContext, maxWaitMs = 15000): 
         return document;
     }
     var doc = getTargetDoc();
-    // キャンセルボタンの存在チェック（処理中の指標）
-    var cancelBtn = doc.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-    if (!cancelBtn) {
-        cancelBtn = doc.querySelector('[data-tooltip-id*="cancel"]');
-    }
+    var btns = Array.from(doc.querySelectorAll('button'));
+    var cancelBtn = btns.find(function(b) {
+        var aria = (b.getAttribute('aria-label') || '').toLowerCase();
+        var title = (b.getAttribute('title') || '').toLowerCase();
+        var txt = (b.textContent || '').trim().toLowerCase();
+        return aria.includes('cancel') || aria.includes('stop') ||
+               title.includes('cancel') || title.includes('stop') ||
+               txt === 'cancel' || txt === 'stop';
+    });
     if (cancelBtn) {
         cancelBtn.click();
-        return { idle: false, action: 'cancelled' };
+        return { idle: false, clickedCancel: true };
     }
-    // Stop/停止 ボタンテキストの存在チェック
-    var buttons = doc.querySelectorAll('button');
-    for (var i = 0; i < buttons.length; i++) {
-        var txt = (buttons[i].innerText || '').trim().toLowerCase();
-        if (txt === 'stop' || txt === '停止') {
-            buttons[i].click();
-            return { idle: false, action: 'stopped' };
-        }
-    }
-    return { idle: true };
+    return { idle: true, clickedCancel: false };
 })()
     `.trim();
 
-    // ファストパス: ループに入る前に1回だけチェック（sleepなしで即リターン）
-    try {
-        const contextId = await ctx.getCascadeContext();
-        const fastResult = await ctx.conn.evaluate(IDLE_CHECK_JS, contextId) as { idle: boolean; action?: string };
-        if (fastResult?.idle) {
-            logDebug(`CDP: waitForCascadeIdle — fast path idle (${Date.now() - t0}ms)`);
-            return;
-        }
-        if (fastResult?.action) {
-            logDebug(`CDP: waitForCascadeIdle — fast path action: ${fastResult.action}`);
-        }
-    } catch (e) {
-        logDebug(`CDP: waitForCascadeIdle — fast path check failed: ${e instanceof Error ? e.message : e}`);
-    }
-
-    const deadline = Date.now() + maxWaitMs;
-    const pollMs = 500;
-    let clickedCancel = true; // ファストパスでキャンセル済みの可能性
-
-    while (Date.now() < deadline) {
-        await ctx.sleep(pollMs);
+    while (Date.now() - t0 < maxWaitMs) {
         try {
             const contextId = await ctx.getCascadeContext();
-            const result = await ctx.conn.evaluate(IDLE_CHECK_JS, contextId) as { idle: boolean; action?: string };
-            if (result?.idle) {
-                if (clickedCancel) {
-                    logDebug(`CDP: waitForCascadeIdle — idle after cancel (${Date.now() - t0}ms)`);
-                    await ctx.sleep(500); // キャンセル後の安定待ち
-                }
+            const res = await ctx.conn.evaluate(IDLE_CHECK_JS, contextId) as { idle: boolean; clickedCancel: boolean };
+            if (res?.idle) {
+                logDebug(`CDP: waitForCascadeIdle — idle confirmed in ${Date.now() - t0}ms`);
                 return;
             }
-            if (result?.action) {
-                logDebug(`CDP: waitForCascadeIdle — action: ${result.action}, waiting for idle...`);
-                clickedCancel = true;
+            if (res?.clickedCancel) {
+                logDebug('CDP: waitForCascadeIdle — clicked cancel button, waiting for stop');
             }
+            await ctx.sleep(500);
         } catch (e) {
             logDebug(`CDP: waitForCascadeIdle — check failed: ${e instanceof Error ? e.message : e}`);
         }
@@ -168,7 +218,7 @@ async function waitForCascadeIdle(ctx: PromptSenderContext, maxWaitMs = 15000): 
 // sendPrompt
 // ---------------------------------------------------------------------------
 
-export async function sendPrompt(ctx: PromptSenderContext, prompt: string): Promise<void> {
+export async function sendPrompt(ctx: PromptSenderContext, prompt: string, workspaceName?: string): Promise<void> {
     const sendStart = Date.now();
     for (let attempt = 1; attempt <= 3; attempt++) {
         try {
@@ -179,6 +229,10 @@ export async function sendPrompt(ctx: PromptSenderContext, prompt: string): Prom
             if (attempt === 3) { throw e; }
             await ctx.sleep(2000 * attempt);
         }
+    }
+
+    if (workspaceName) {
+        await switchOrStartProjectConversation(ctx, workspaceName, false);
     }
 
     // Cascade パネルの表示を保証
@@ -205,10 +259,10 @@ export async function sendPrompt(ctx: PromptSenderContext, prompt: string): Prom
         var rect = el.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
     }
-    var editors = Array.from(document.querySelectorAll('div[role="textbox"]:not(.xterm-helper-textarea)')).filter(isVisible);
+    var selectors = 'div[aria-label="Message input"], div[role="combobox"][contenteditable="true"], div[role="textbox"]:not(.xterm-helper-textarea), div[contenteditable="true"]:not(.xterm-helper-textarea), textarea:not(.xterm-helper-textarea)';
+    var editors = Array.from(document.querySelectorAll(selectors)).filter(isVisible);
     var el = editors[editors.length - 1];
     if (!el) return { ready: false, reason: 'no textbox' };
-    if (el.contentEditable !== 'true') return { ready: false, reason: 'not editable' };
     return { ready: true };
 })()
     `.trim();
@@ -249,7 +303,8 @@ export async function sendPrompt(ctx: PromptSenderContext, prompt: string): Prom
         return rect.width > 0 && rect.height > 0;
     }
 
-    const editors = Array.from(document.querySelectorAll('div[role="textbox"]:not(.xterm-helper-textarea)')).filter(isVisible);
+    const selectors = 'div[aria-label="Message input"], div[role="combobox"][contenteditable="true"], div[role="textbox"]:not(.xterm-helper-textarea), div[contenteditable="true"]:not(.xterm-helper-textarea), textarea:not(.xterm-helper-textarea)';
+    const editors = Array.from(document.querySelectorAll(selectors)).filter(isVisible);
     const el = editors.at(-1);
 
     if (!el) {
@@ -293,12 +348,13 @@ export async function sendPrompt(ctx: PromptSenderContext, prompt: string): Prom
     if (!inputResult?.success) {
         throw new CascadePanelError(`Failed to find chat input: ${inputResult?.error}`);
     }
-    logDebug('CDP: input set via div[role="textbox"]');
+    logDebug('CDP: input set via contenteditable / combobox / textbox');
 
     // --- (B) テキスト挿入後の検証 ---
     const VERIFY_JS = `
 (function() {
-    var editors = Array.from(document.querySelectorAll('div[role="textbox"]:not(.xterm-helper-textarea)'));
+    var selectors = 'div[aria-label="Message input"], div[role="combobox"][contenteditable="true"], div[role="textbox"]:not(.xterm-helper-textarea), div[contenteditable="true"]:not(.xterm-helper-textarea), textarea:not(.xterm-helper-textarea)';
+    var editors = Array.from(document.querySelectorAll(selectors));
     var el = editors[editors.length - 1];
     return { hasContent: el && (el.textContent || '').trim().length > 0, length: (el && el.textContent || '').length };
 })()
@@ -332,7 +388,8 @@ export async function sendPrompt(ctx: PromptSenderContext, prompt: string): Prom
         return rect.width > 0 && rect.height > 0;
     }
 
-    const editors = Array.from(document.querySelectorAll('div[role="textbox"]:not(.xterm-helper-textarea)')).filter(isVisible);
+    const selectors = 'div[aria-label="Message input"], div[role="combobox"][contenteditable="true"], div[role="textbox"]:not(.xterm-helper-textarea), div[contenteditable="true"]:not(.xterm-helper-textarea), textarea:not(.xterm-helper-textarea)';
+    const editors = Array.from(document.querySelectorAll(selectors)).filter(isVisible);
     const el = editors.at(-1);
     
     if (!el) { return { success: false }; }

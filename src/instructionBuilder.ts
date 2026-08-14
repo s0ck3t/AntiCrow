@@ -49,10 +49,9 @@ function getDefaultProgressInstruction(): string {
 // 共通ヘルパー: 日時文字列生成
 // ---------------------------------------------------------------------------
 export function buildDatetimeStr(): string {
-    return new Date().toLocaleString('ja-JP', {
-        timeZone: 'Asia/Tokyo',
+    return new Date().toLocaleString('en-GB', {
         year: 'numeric',
-        month: 'long',
+        month: 'short',
         day: 'numeric',
         weekday: 'short',
         hour: '2-digit',

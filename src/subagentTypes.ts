@@ -63,6 +63,22 @@ export interface SubagentResponse {
 }
 
 /**
+ * サブエージェント → メインエージェントへの準備完了通知
+ * ファイル IPC (subagent_{name}_ready.json) で使用
+ */
+export interface SubagentReady {
+    /** メッセージタイプ識別子 */
+    type: 'subagent_ready';
+    /** 準備完了したサブエージェント名 */
+    name: string;
+    /** タイムスタンプ */
+    timestamp: number;
+    /** プロセス ID（省略可能） */
+    pid?: number;
+}
+
+
+/**
  * サブエージェントの設定
  */
 export interface SubagentConfig {

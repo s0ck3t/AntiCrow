@@ -64,7 +64,7 @@ import * as path from 'path';
 // =====================================================================
 
 export async function activate(context: vscode.ExtensionContext) {
-    const log = initLogger();
+    const log = initLogger(context.globalStorageUri.fsPath);
     logInfo('Extension activating...');
 
 
@@ -85,16 +85,27 @@ export async function activate(context: vscode.ExtensionContext) {
     // -----------------------------------------------------------------
     {
         try {
-            const currentWsName = vscode.workspace.name;
+            const rawWsName = vscode.workspace.name;
             const currentWsFolders = vscode.workspace.workspaceFolders;
-            if (currentWsName && currentWsFolders && currentWsFolders.length > 0) {
+            if (rawWsName && currentWsFolders && currentWsFolders.length > 0) {
+                const currentWsName = extractWorkspaceName(rawWsName);
                 const { isInvalidWorkspaceName } = await import('./bridgeLifecycle');
-                if (!isInvalidWorkspaceName(currentWsName)) {
-                    const { getConfig } = await import('./configHelper');
+                if (!isInvalidWorkspaceName(currentWsName) && !SubagentReceiver.isSubagent(currentWsName)) {
+                    const { getConfig, getWorkspacePaths } = await import('./configHelper');
                     const wsPath = currentWsFolders[0].uri.fsPath;
-                    const wsPaths = getConfig().get<Record<string, string>>('workspacePaths') || {};
+                    const wsPaths = getWorkspacePaths();
+                    let modified = false;
+                    for (const key of Object.keys(wsPaths)) {
+                        if (SubagentReceiver.isSubagent(key) || isInvalidWorkspaceName(key)) {
+                            delete wsPaths[key];
+                            modified = true;
+                        }
+                    }
                     if (!wsPaths[currentWsName] || wsPaths[currentWsName] !== wsPath) {
                         wsPaths[currentWsName] = wsPath;
+                        modified = true;
+                    }
+                    if (modified) {
                         await getConfig().update('workspacePaths', wsPaths, vscode.ConfigurationTarget.Global);
                         logDebug(`Extension: auto-saved workspace path: "${currentWsName}" → "${wsPath}"`);
                     }
@@ -109,22 +120,22 @@ export async function activate(context: vscode.ExtensionContext) {
 
 
     // -----------------------------------------------------------------
-    // コマンド: Set Bot Token
+    // Command: Set Bot Token
     // -----------------------------------------------------------------
     context.subscriptions.push(
         vscode.commands.registerCommand('anti-crow.setToken', async () => {
             const token = await vscode.window.showInputBox({
-                prompt: 'Discord Bot Token を入力してください',
+                prompt: 'Please enter your Discord Bot Token',
                 password: true,
                 ignoreFocusOut: true,
             });
             if (token) {
                 await context.secrets.store('discord-bot-token', token);
                 await vscode.workspace.getConfiguration('antiCrow').update('botToken', true, vscode.ConfigurationTarget.Global);
-                vscode.window.showInformationMessage('🔐 Bot Token を SecretStorage に保存しました。');
+                vscode.window.showInformationMessage('🔐 Bot Token saved securely to SecretStorage.');
                 logDebug('Token saved to SecretStorage');
 
-                // autoStart 有効かつ未起動なら自動的に Bridge を開始
+                // Auto-start bridge if autoStart enabled and not yet running
                 const cfg = vscode.workspace.getConfiguration('antiCrow');
                 if (cfg.get<boolean>('autoStart') && (!ctx.bot || !ctx.bot.isReady())) {
                     startBridge(ctx, context).catch(e => {
@@ -136,52 +147,52 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     // -----------------------------------------------------------------
-    // コマンド: Start
+    // Command: Start
     // -----------------------------------------------------------------
     context.subscriptions.push(
         vscode.commands.registerCommand('anti-crow.start', async () => {
             if (ctx.bot && ctx.bot.isReady()) {
-                vscode.window.showInformationMessage('AntiCrow は既に稼働中です。');
+                vscode.window.showInformationMessage('AntiCrow is already running.');
                 return;
             }
 
             try {
                 await startBridge(ctx, context);
-                vscode.window.showInformationMessage('✅ AntiCrow を開始しました。');
+                vscode.window.showInformationMessage('✅ AntiCrow started successfully.');
             } catch (e) {
                 logError('Start failed', e);
-                vscode.window.showErrorMessage('起動に失敗しました。Output パネルでログを確認してください。');
+                vscode.window.showErrorMessage('Failed to start. Please check logs in the Output panel.');
             }
         })
     );
 
     // -----------------------------------------------------------------
-    // コマンド: Stop
+    // Command: Stop
     // -----------------------------------------------------------------
     context.subscriptions.push(
         vscode.commands.registerCommand('anti-crow.stop', async () => {
             await stopBridge(ctx);
-            vscode.window.showInformationMessage('AntiCrow を停止しました。');
+            vscode.window.showInformationMessage('AntiCrow stopped.');
         })
     );
 
     // -----------------------------------------------------------------
-    // コマンド: Show Plans
+    // Command: Show Plans
     // -----------------------------------------------------------------
     context.subscriptions.push(
         vscode.commands.registerCommand('anti-crow.showPlans', async () => {
             if (!ctx.planStore) {
-                vscode.window.showWarningMessage('Bridge が起動していません。');
+                vscode.window.showWarningMessage('Bridge is not running.');
                 return;
             }
             const plans = ctx.planStore.getAll();
             if (plans.length === 0) {
-                vscode.window.showInformationMessage('登録された計画はありません。');
+                vscode.window.showInformationMessage('No registered plans found.');
                 return;
             }
 
             const lines = plans.map(p => {
-                const cronStr = p.cron || '(即時)';
+                const cronStr = p.cron || '(immediate)';
                 return `[${p.status}] ${p.plan_id} — ${cronStr} — ${p.human_summary || p.prompt.substring(0, 50)}`;
             });
 
@@ -194,19 +205,19 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     // -----------------------------------------------------------------
-    // コマンド: Clear Plans
+    // Command: Clear Plans
     // -----------------------------------------------------------------
     context.subscriptions.push(
         vscode.commands.registerCommand('anti-crow.clearPlans', async () => {
             const confirm = await vscode.window.showWarningMessage(
-                'すべての計画を削除しますか？この操作は取り消せません。',
+                'Are you sure you want to delete all plans? This action cannot be undone.',
                 { modal: true },
-                'はい'
+                'Yes'
             );
-            if (confirm === 'はい') {
+            if (confirm === 'Yes') {
                 ctx.scheduler?.stopAll();
                 ctx.planStore?.clearAll();
-                vscode.window.showInformationMessage('すべての計画を削除しました。');
+                vscode.window.showInformationMessage('All plans have been deleted.');
             }
         })
     );
@@ -214,22 +225,22 @@ export async function activate(context: vscode.ExtensionContext) {
 
 
     // -----------------------------------------------------------------
-    // コマンド: Create Desktop Shortcut
+    // Command: Create Desktop Shortcut
     // -----------------------------------------------------------------
     context.subscriptions.push(
         vscode.commands.registerCommand('anti-crow.createShortcut', () => {
             try {
                 createDesktopShortcut(context.extensionPath);
-                vscode.window.showInformationMessage('✅ デスクトップにショートカットを作成しました。');
+                vscode.window.showInformationMessage('✅ Desktop shortcut created successfully.');
             } catch (e) {
                 logError('createShortcut command failed', e);
-                vscode.window.showErrorMessage('ショートカット作成に失敗しました。Output パネルでログを確認してください。');
+                vscode.window.showErrorMessage('Failed to create shortcut. Please check logs in the Output panel.');
             }
         })
     );
 
     // -----------------------------------------------------------------
-    // 初回起動: ショートカット設置の提案
+    // First-run: Offer desktop shortcut creation
     // -----------------------------------------------------------------
     checkAndOfferShortcut(context).catch(e => {
         logError('Shortcut offer check failed', e);
@@ -237,29 +248,29 @@ export async function activate(context: vscode.ExtensionContext) {
 
 
     // -----------------------------------------------------------------
-    // 自動起動
+    // Auto-start
     // -----------------------------------------------------------------
-    const config = vscode.workspace.getConfiguration('antiCrow');
-    if (config.get<boolean>('autoStart')) {
+    const autoStart = vscode.workspace.getConfiguration('antiCrow').get<boolean>('autoStart', true);
+    if (autoStart) {
         startBridge(ctx, context).catch(e => {
             logError('Auto-start failed', e);
         });
     }
 
     // -----------------------------------------------------------------
-    // サブエージェント統合
+    // Subagent (Sub-window) initialisation
     // -----------------------------------------------------------------
     const ipcDir = path.join(context.globalStorageUri.fsPath, 'ipc');
     const workspaceFolders = vscode.workspace.workspaceFolders;
     const repoRoot = workspaceFolders?.[0]?.uri.fsPath ?? '';
     const windowTitle = vscode.env.appName ? `${vscode.workspace.name ?? ''} - ${vscode.env.appName}` : '';
-    const workspaceName = vscode.workspace.name ?? extractWorkspaceName(windowTitle);
+    const rawWorkspaceName = vscode.workspace.name ?? extractWorkspaceName(windowTitle);
+    const workspaceName = extractWorkspaceName(rawWorkspaceName);
 
     if (SubagentReceiver.isSubagent(workspaceName)) {
-        // --- サブウィンドウ: SubagentReceiver を起動 ---
-        logInfo(`[Subagent] サブウィンドウとして検出: "${workspaceName}"`);
+        // --- Sub-window: Start SubagentReceiver ---
+        logInfo(`[Subagent] Detected as sub-window: "${workspaceName}"`);
         const receiver = new SubagentReceiver(workspaceName, ipcDir);
-        // ハンドラは startBridge 完了後に bridgeLifecycle.ts で Cascade 統合ハンドラに設定される
         receiver.start();
         ctx.subagentReceiver = receiver;
         logInfo('[Subagent] SubagentReceiver 起動完了（ハンドラは startBridge 後に設定）');

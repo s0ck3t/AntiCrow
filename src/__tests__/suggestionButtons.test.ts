@@ -29,7 +29,7 @@ import type { SuggestionItem } from '../suggestionParser';
 describe('buildSuggestionContent', () => {
     it('空配列 → デフォルト見出しのみ返す', () => {
         const result = buildSuggestionContent([]);
-        expect(result).toBe('💡 **次のアクション提案**');
+        expect(result).toBe('💡 **Next Action Suggestions**');
     });
 
     it('description なし（全アイテム） → デフォルト見出しのみ返す', () => {
@@ -38,7 +38,7 @@ describe('buildSuggestionContent', () => {
             { label: 'テストB', prompt: 'do B' },
         ];
         const result = buildSuggestionContent(items);
-        expect(result).toBe('💡 **次のアクション提案**');
+        expect(result).toBe('💡 **Next Action Suggestions**');
     });
 
     it('description あり（全アイテム） → 絵文字付きリストで表示', () => {
@@ -50,7 +50,7 @@ describe('buildSuggestionContent', () => {
         const result = buildSuggestionContent(items);
 
         // 見出し行
-        expect(result).toContain('💡 **次のアクション提案**');
+        expect(result).toContain('💡 **Next Action Suggestions**');
 
         // 各行に正しい絵文字・ラベル・description が含まれる
         expect(result).toContain('💡 **アクションA** — Aの詳細説明');
@@ -67,7 +67,7 @@ describe('buildSuggestionContent', () => {
         const result = buildSuggestionContent(items);
 
         // description がある → リスト表示モード
-        expect(result).toContain('💡 **次のアクション提案**');
+        expect(result).toContain('💡 **Next Action Suggestions**');
 
         // description ありのアイテム
         expect(result).toContain('💡 **アクション1** — 詳細あり');
@@ -99,7 +99,7 @@ describe('buildSuggestionContent', () => {
         ];
         const result = buildSuggestionContent(items);
 
-        expect(result).toContain('💡 **次のアクション提案**');
+        expect(result).toContain('💡 **Next Action Suggestions**');
         expect(result).toContain('💡 **ソロ** — ひとつだけ');
     });
 });

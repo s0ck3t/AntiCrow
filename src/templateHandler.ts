@@ -284,7 +284,7 @@ export async function handleTemplateButton(
         fileIpc.writeRequestMeta(tplReqId, interaction.channelId, wsNameFromCategory);
         const { prompt: tplPlanPrompt, tempFiles: tplTempFiles } = buildPlanPrompt(expandedPrompt, 'agent-chat', 'template-run', responsePath, undefined, undefined, tplIpcDir);
         try {
-            await activeCdp.sendPrompt(tplPlanPrompt);
+            await activeCdp.sendPrompt(tplPlanPrompt, wsNameFromCategory ?? undefined);
             const responseTimeout = getResponseTimeout();
             fileIpc.registerActiveRequest(tplReqId, tplTempFiles);
             let planResponse: string;
@@ -458,7 +458,7 @@ export async function handleModalSubmit(
         fileIpc.writeRequestMeta(tplReqId2, interaction.channelId ?? '', wsNameFromCategory);
         const { prompt: tplPlanPrompt, tempFiles: tplTempFiles } = buildPlanPrompt(expandedPrompt, 'agent-chat', 'template-run', responsePath, undefined, undefined, tplIpcDir);
         try {
-            await activeCdp.sendPrompt(tplPlanPrompt);
+            await activeCdp.sendPrompt(tplPlanPrompt, wsNameFromCategory ?? undefined);
             const responseTimeout = getResponseTimeout();
             fileIpc.registerActiveRequest(tplReqId2, tplTempFiles);
             let planResponse: string;

@@ -83,17 +83,17 @@ export async function closeWindow(
     ports: number[],
     workspaceName: string,
 ): Promise<boolean> {
-    logDebug(`[closeWindow] ワークスペース "${workspaceName}" のウィンドウを閉じます`);
+    logDebug(`[closeWindow] Closing window for workspace "${workspaceName}"`);
 
     try {
-        // 1. 全ターゲットを取得
+        // 1. Discover all targets
         const instances = await discoverInstances(ports);
         if (instances.length === 0) {
-            logWarn('[closeWindow] ターゲットが見つかりませんでした');
+            logWarn('[closeWindow] Target not found');
             return false;
         }
 
-        // 2. ワークスペース名でマッチング（matchesSubagent と同等の4戦略）
+        // 2. Match by workspace name (4 strategies equivalent to matchesSubagent)
         let targetInstance: DiscoveredInstance | undefined;
         for (const inst of instances) {
             const wsName = extractWorkspaceName(inst.title);
@@ -103,33 +103,33 @@ export async function closeWindow(
                 inst.title.includes(path.basename(workspaceName));
             if (matches) {
                 targetInstance = inst;
-                logDebug(`[closeWindow] マッチ: wsName="${wsName}", title="${inst.title.substring(0, 80)}"`);
+                logDebug(`[closeWindow] Match: wsName="${wsName}", title="${inst.title.substring(0, 80)}"`);
                 break;
             }
         }
 
         if (!targetInstance) {
-            logWarn(`[closeWindow] ワークスペース "${workspaceName}" のターゲットが見つかりませんでした`);
-            logDebug(`[closeWindow] 利用可能なターゲット: ${instances.map(i => `"${extractWorkspaceName(i.title) || i.title}"`).join(', ')}`);
+            logWarn(`[closeWindow] Target for workspace "${workspaceName}" not found`);
+            logDebug(`[closeWindow] Available targets: ${instances.map(i => `"${extractWorkspaceName(i.title) || i.title}"`).join(', ')}`);
             return false;
         }
 
-        // 3. メインウィンドウ（現在接続中）を閉じないようガード
+        // 3. Guard against closing main window (currently connected)
         const currentWsName = conn ? extractWorkspaceName(conn.getActiveTargetTitle() ?? '') : null;
         if (currentWsName === workspaceName) {
-            logWarn(`[closeWindow] ワークスペース "${workspaceName}" はメインウィンドウです。閉じません`);
+            logWarn(`[closeWindow] Workspace "${workspaceName}" is the main window. Skipping close`);
             return false;
         }
 
-        logDebug(`[closeWindow] ターゲット発見: "${targetInstance.title}" (${targetInstance.wsUrl})`);
+        logDebug(`[closeWindow] Found target: "${targetInstance.title}" (${targetInstance.wsUrl})`);
 
-        // 4. 一時的な CdpConnection を作成して接続
+        // 4. Create temporary CdpConnection
         const tempConn = new CdpConnection(ports);
         try {
             await tempConn.connectToUrl(targetInstance.wsUrl);
-            logDebug('[closeWindow] 一時接続に成功');
+            logDebug('[closeWindow] Temporary connection established');
 
-            // 5a. window.close() でウィンドウを閉じる（第一優先）
+            // 5a. Close window via window.close() (first priority)
             let closed = false;
             try {
                 const evalJs = `
@@ -143,40 +143,39 @@ export async function closeWindow(
                     })()
                 `;
                 const result = await tempConn.evaluate(evalJs);
-                logDebug(`[closeWindow] window.close() 結果: ${JSON.stringify(result)}`);
+                logDebug(`[closeWindow] window.close() result: ${JSON.stringify(result)}`);
                 closed = true;
             } catch (err) {
-                logDebug(`[closeWindow] window.close() 失敗: ${err}`);
+                logDebug(`[closeWindow] window.close() failed: ${err}`);
             }
 
-            // 5b. フォールバック: process.exit(0)
+            // 5b. Fallback: process.exit(0)
             if (!closed) {
                 try {
                     await tempConn.evaluate('process.exit(0)');
-                    logDebug('[closeWindow] process.exit(0) で終了');
+                    logDebug('[closeWindow] Terminated with process.exit(0)');
                     closed = true;
                 } catch {
-                    // process.exit() は接続切断を引き起こすため、エラーは想定内
-                    logDebug('[closeWindow] process.exit(0) 実行（接続切断は想定内）');
+                    logDebug('[closeWindow] Executed process.exit(0) (disconnection expected)');
                     closed = true;
                 }
             }
 
-            // 5c. フォールバック: Browser.close CDP コマンド
+            // 5c. Fallback: Browser.close CDP command
             if (!closed) {
                 try {
                     await tempConn.send('Browser.close', {});
-                    logDebug('[closeWindow] Browser.close で終了');
+                    logDebug('[closeWindow] Closed via Browser.close');
                     closed = true;
                 } catch (err) {
-                    logDebug(`[closeWindow] Browser.close 失敗: ${err}`);
+                    logDebug(`[closeWindow] Browser.close failed: ${err}`);
                 }
             }
 
-            // 6. ウィンドウが閉じてファイルロックが解放されるのを待つ
+            // 6. Wait for window to close and file locks to release
             await new Promise(resolve => setTimeout(resolve, 5000));
 
-            // 7. ウィンドウが本当に閉じたか確認
+            // 7. Verify window actually closed
             try {
                 const remainingInstances = await discoverInstances(ports);
                 const stillExists = remainingInstances.some(inst => {
@@ -185,25 +184,25 @@ export async function closeWindow(
                         inst.title.includes(workspaceName);
                 });
                 if (stillExists) {
-                    logWarn(`[closeWindow] ワークスペース "${workspaceName}" のウィンドウがまだ存在しています`);
+                    logWarn(`[closeWindow] Window for workspace "${workspaceName}" still exists`);
                     return false;
                 }
             } catch {
-                // 確認失敗は無視（ウィンドウは閉じている可能性が高い）
+                // Ignore verification errors
             }
 
-            logDebug(`[closeWindow] ワークスペース "${workspaceName}" のウィンドウを閉じました`);
+            logDebug(`[closeWindow] Closed window for workspace "${workspaceName}"`);
             return true;
         } finally {
-            // 一時接続を確実にクリーンアップ
+            // Clean up temporary connection
             try {
                 tempConn.fullDisconnect();
             } catch {
-                // disconnect エラーは無視
+                // Ignore disconnect errors
             }
         }
     } catch (err) {
-        logError(`[closeWindow] エラー: ${err}`);
+        logError(`[closeWindow] Error: ${err}`);
         return false;
     }
 }
@@ -213,31 +212,31 @@ export async function closeWindow(
 // ---------------------------------------------------------------------------
 
 /**
- * サブエージェントのウィンドウを最小化する。
+ * Minimises a subagent window.
  *
- * CDP の Browser.getWindowForTarget → Browser.setWindowBounds を使用。
- * 一時的な CdpConnection を作成して実行するため、現在の接続には影響しない。
- * ベストエフォート：失敗しても例外をスローしない。
+ * Uses CDP Browser.getWindowForTarget → Browser.setWindowBounds.
+ * Runs on a temporary CdpConnection without affecting current connection.
+ * Best effort: does not throw on failure.
  *
- * @param ports CDP ポート一覧
- * @param workspaceName 最小化したいウィンドウのワークスペース名
- * @returns true: 最小化成功, false: 失敗
+ * @param ports CDP port list
+ * @param workspaceName Workspace name of the window to minimise
+ * @returns true: minimised successfully, false: failed
  */
 export async function minimizeWindow(
     ports: number[],
     workspaceName: string,
 ): Promise<boolean> {
-    logDebug(`[minimizeWindow] ワークスペース "${workspaceName}" のウィンドウを最小化します`);
+    logDebug(`[minimizeWindow] Minimising window for workspace "${workspaceName}"`);
 
     try {
-        // 1. 全ターゲットを取得
+        // 1. Discover all targets
         const instances = await discoverInstances(ports);
         if (instances.length === 0) {
-            logWarn('[minimizeWindow] ターゲットが見つかりませんでした');
+            logWarn('[minimizeWindow] Target not found');
             return false;
         }
 
-        // 2. ワークスペース名でマッチング
+        // 2. Match by workspace name
         let targetInstance: DiscoveredInstance | undefined;
         for (const inst of instances) {
             const wsName = extractWorkspaceName(inst.title);
@@ -248,19 +247,19 @@ export async function minimizeWindow(
         }
 
         if (!targetInstance) {
-            logWarn(`[minimizeWindow] ワークスペース "${workspaceName}" のターゲットが見つかりませんでした`);
+            logWarn(`[minimizeWindow] Target for workspace "${workspaceName}" not found`);
             return false;
         }
 
-        logDebug(`[minimizeWindow] ターゲット発見: "${targetInstance.title}" (${targetInstance.wsUrl})`);
+        logDebug(`[minimizeWindow] Found target: "${targetInstance.title}" (${targetInstance.wsUrl})`);
 
-        // 3. 一時的な CdpConnection を作成して接続
+        // 3. Connect via temporary CdpConnection
         const tempConn = new CdpConnection(ports);
         try {
             await tempConn.connectToUrl(targetInstance.wsUrl);
-            logDebug('[minimizeWindow] 一時接続に成功');
+            logDebug('[minimizeWindow] Temporary connection established');
 
-            // 4. Browser.getWindowForTarget でウィンドウIDを取得
+            // 4. Get windowId via Browser.getWindowForTarget
             let windowId: number | undefined;
             try {
                 const windowResult = await tempConn.send('Browser.getWindowForTarget', {
@@ -269,28 +268,27 @@ export async function minimizeWindow(
                 windowId = windowResult?.windowId;
                 logDebug(`[minimizeWindow] windowId=${windowId}`);
             } catch (err) {
-                logDebug(`[minimizeWindow] Browser.getWindowForTarget 失敗: ${err}`);
+                logDebug(`[minimizeWindow] Browser.getWindowForTarget failed: ${err}`);
             }
 
             if (windowId !== undefined) {
-                // 5a. Browser.setWindowBounds で最小化
+                // 5a. Minimise via Browser.setWindowBounds
                 try {
                     await tempConn.send('Browser.setWindowBounds', {
                         windowId,
                         bounds: { windowState: 'minimized' },
                     });
-                    logDebug(`[minimizeWindow] ワークスペース "${workspaceName}" のウィンドウを最小化しました (CDP)`);
+                    logDebug(`[minimizeWindow] Minimised window for workspace "${workspaceName}" (CDP)`);
                     return true;
                 } catch (err) {
-                    logDebug(`[minimizeWindow] Browser.setWindowBounds 失敗: ${err}`);
+                    logDebug(`[minimizeWindow] Browser.setWindowBounds failed: ${err}`);
                 }
             }
 
-            // 5b. フォールバック: Electron の BrowserWindow API を使用
+            // 5b. Fallback: Electron BrowserWindow API
             const evalJs = `
                 (function() {
                     try {
-                        // Electron の BrowserWindow.getFocusedWindow() or getAllWindows()
                         var electron = require('electron');
                         if (electron && electron.remote) {
                             var win = electron.remote.getCurrentWindow();
@@ -301,7 +299,6 @@ export async function minimizeWindow(
                         }
                     } catch(e) {}
                     try {
-                        // process.mainModule 経由
                         var mainModule = process.mainModule || require.main;
                         if (mainModule) {
                             var BrowserWindow = mainModule.require('electron').BrowserWindow;
@@ -318,24 +315,24 @@ export async function minimizeWindow(
 
             const result = await tempConn.evaluate(evalJs);
             const resultObj = result as { success?: boolean; method?: string; error?: string } | null;
-            logDebug(`[minimizeWindow] フォールバック結果: ${JSON.stringify(result)}`);
+            logDebug(`[minimizeWindow] Fallback result: ${JSON.stringify(result)}`);
 
             if (resultObj?.success) {
-                logDebug(`[minimizeWindow] ワークスペース "${workspaceName}" のウィンドウを最小化しました (${resultObj.method})`);
+                logDebug(`[minimizeWindow] Minimised window for workspace "${workspaceName}" (${resultObj.method})`);
                 return true;
             }
 
-            logWarn(`[minimizeWindow] ワークスペース "${workspaceName}" のウィンドウを最小化できませんでした`);
+            logWarn(`[minimizeWindow] Could not minimise window for workspace "${workspaceName}"`);
             return false;
         } finally {
             try {
                 tempConn.fullDisconnect();
             } catch {
-                // disconnect エラーは無視
+                // Ignore disconnect errors
             }
         }
     } catch (err) {
-        logWarn(`[minimizeWindow] エラー: ${err}`);
+        logWarn(`[minimizeWindow] Error: ${err}`);
         return false;
     }
 }

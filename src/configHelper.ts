@@ -54,9 +54,9 @@ export function getConfig(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration(SECTION);
 }
 
-/** i18n 言語設定を取得する（デフォルト: 'ja'） */
-function getLanguage(): string {
-    return getConfig().get<string>('language') || 'ja';
+/** Get i18n language setting (default: 'en') */
+export function getLanguage(): string {
+    return getConfig().get<string>('language') || 'en';
 }
 
 /** CDP レスポンスタイムアウト（ms）を取得する（デフォルト: 0 = 無制限） */
@@ -86,7 +86,7 @@ export function getArchiveDays(): number {
 
 /** workspacePaths を取得する（手動設定のみ、非推奨） */
 export function getWorkspacePaths(): Record<string, string> {
-    return getConfig().get<Record<string, string>>('workspacePaths') || {};
+    return { ...(getConfig().get<Record<string, string>>('workspacePaths') || {}) };
 }
 
 /** 新規ワークスペース作成用ペアレントディレクトリ候補を取得する */

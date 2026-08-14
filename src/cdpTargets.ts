@@ -201,17 +201,22 @@ export function extractWorkspaceName(title: string): string {
     // IDE のサフィックスを除去: " — Antigravity", " - Visual Studio Code" など
     name = name.replace(/\s*[-\u2013\u2014]\s*(?:Antigravity|Visual Studio(?: Code)?).*$/, '');
 
+    // (Workspace) / (ワークスペース) サフィックスを除去（マルチプロジェクトワークスペース対応）
+    name = name.replace(/\s*\((?:Workspace|ワークスペース)\)\s*$/i, '');
+
     // "ファイル名 - フォルダ名" の形式からフォルダ名（ワークスペース名）を抽出する
     // '-', '\u2013' (EN dash), '\u2014' (EM dash) をセパレータとして扱う
     const parts = name.split(/\s+[-\u2013\u2014]\s+/);
     if (parts.length > 1) {
         // 「ファイル名 — ワークスペース名」: 最後の要素がワークスペース名
-        return parts[parts.length - 1].trim();
-    }
-    if (parts.length === 1) {
+        name = parts[parts.length - 1].trim();
+    } else if (parts.length === 1) {
         // サフィックス除去後に1要素 = 「ワークスペース名」のみ or ファイル名なし
-        return parts[0].trim();
+        name = parts[0].trim();
     }
+
+    // 再度 (Workspace) / (ワークスペース) サフィックスを除去
+    name = name.replace(/\s*\((?:Workspace|ワークスペース)\)\s*$/i, '');
 
     return name.trim();
 }

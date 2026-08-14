@@ -44,7 +44,10 @@ import { loadTeamConfig } from './teamConfig';
 import { deployAntiCrowSkill } from './embeddedSkill';
 import { t } from './i18n';
 import { isAutoModeActive } from './autoModeController';
+import { extractWorkspaceName } from './cdpTargets';
+import { writeInstructionJson } from './instructionBuilder';
 import * as fs from 'fs';
+import * as path from 'path';
 
 /** 既知のコード/設定ファイル拡張子 — これらで終わる名前はファイル名と見なす */
 const CODE_EXTENSIONS = new Set([
@@ -74,22 +77,24 @@ export function looksLikeFileName(name: string): boolean {
     return CODE_EXTENSIONS.has(ext);
 }
 
-/** ワークスペース名としてカテゴリ作成すべきでない名前を判定する */
+/** Determines if a name should not be used to create a workspace category */
 export function isInvalidWorkspaceName(wsName: string): boolean {
     if (!wsName) { return true; }
     let reason = '';
-    if (wsName.includes('://')) { reason = 'URL形式'; }
-    else if (wsName === 'Antigravity') { reason = '初期タイトル'; }
-    else if (wsName.includes('workbench.html')) { reason = '内部URL'; }
-    else if (wsName.includes('Welcome')) { reason = 'Welcomeタブ'; }
-    else if (wsName.includes('Settings')) { reason = '設定タブ'; }
-    else if (wsName.includes('Extensions')) { reason = '拡張機能タブ'; }
-    else if (/^\..*/.test(wsName)) { reason = '隠しファイル'; }
-    else if (looksLikeFileName(wsName)) { reason = 'ファイル名'; }
-    else if (wsName.length > 50) { reason = '長すぎる名前'; }
-    else if (/\d+\s*(つの|個の)/.test(wsName)) { reason = 'SCMパターン(つの/個の)'; }
-    else if (wsName.includes('問題')) { reason = 'SCM: 問題'; }
-    else if (wsName.includes('problem')) { reason = 'SCM: problem'; }
+    if (wsName.includes('://')) { reason = 'URL format'; }
+    else if (wsName.includes('-subagent-')) { reason = 'Subagent window'; }
+    else if (wsName.includes('subwindows')) { reason = 'Subagent subwindow'; }
+    else if (wsName === 'Antigravity') { reason = 'Initial title'; }
+    else if (wsName.includes('workbench.html')) { reason = 'Internal URL'; }
+    else if (wsName.includes('Welcome')) { reason = 'Welcome tab'; }
+    else if (wsName.includes('Settings')) { reason = 'Settings tab'; }
+    else if (wsName.includes('Extensions')) { reason = 'Extensions tab'; }
+    else if (/^\..*/.test(wsName)) { reason = 'Hidden file'; }
+    else if (looksLikeFileName(wsName)) { reason = 'File name'; }
+    else if (wsName.length > 50) { reason = 'Name too long'; }
+    else if (/\d+\s*(つの|個の|items?|changes?|problems?)/i.test(wsName)) { reason = 'SCM pattern (items/changes)'; }
+    else if (wsName.includes('問題') || wsName.includes('Problems')) { reason = 'SCM: Problems'; }
+    else if (wsName.includes('problem')) { reason = 'SCM: Problem'; }
 
     if (reason) {
         logDebug(`isInvalidWorkspaceName: "${wsName}" → invalid (${reason})`);
@@ -99,14 +104,17 @@ export function isInvalidWorkspaceName(wsName: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// 設定バリデーション
+// Configuration validation
 // ---------------------------------------------------------------------------
 
 function validateConfig(): void {
     const wsPaths = getWorkspacePaths();
     for (const [wsName, wsPath] of Object.entries(wsPaths)) {
+        if (isInvalidWorkspaceName(wsName)) {
+            continue;
+        }
         if (!fs.existsSync(wsPath)) {
-            logWarn(`validateConfig: workspacePaths["${wsName}"] のパスが存在しません: "${wsPath}"`);
+            logWarn(`validateConfig: path for workspacePaths["${wsName}"] does not exist: "${wsPath}"`);
         }
     }
 }
@@ -416,6 +424,78 @@ export async function startBridge(
     }
 }
 
+/** SubagentReceiver に Cascade 統合ハンドラを設定する */
+export function setupSubagentReceiverHandler(
+    receiver: SubagentReceiver,
+    cdp: CdpBridge,
+    fileIpc: FileIpc,
+): void {
+    receiver.setHandler(async (prompt: string) => {
+        const handlerStartTime = Date.now();
+        logInfo(`[SubagentReceiver] ────────── Prompt Received ──────────`);
+        logInfo(`[SubagentReceiver] Prompt length: ${prompt.length} chars`);
+        logInfo(`[SubagentReceiver] Prompt preview: ${prompt.substring(0, 150)}${prompt.length > 150 ? '...' : ''}`);
+        try {
+            const rawWsName = vscode.workspace.name ?? 'subagent';
+            const wsName = extractWorkspaceName(rawWsName);
+            const repoRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+            const teamConfig = repoRoot ? loadTeamConfig(repoRoot) : null;
+            const timeoutMs = teamConfig?.responseTimeoutMs ?? 900_000; // Default 15 min
+            const { requestId, responsePath } = fileIpc.createMarkdownRequestId(wsName);
+
+            const ipcDir = fileIpc.getIpcDir();
+            const instructionPath = path.join(ipcDir, `${requestId}_instruction.json`);
+            const progressPath = path.join(ipcDir, `${requestId}_progress.json`);
+
+            writeInstructionJson(instructionPath, {
+                prompt,
+                responsePath,
+                progressPath,
+                workspaceName: wsName,
+            });
+
+            const subagentPrompt = t('prompt.view_file_instruction', instructionPath);
+
+            logInfo(`[SubagentReceiver] IPC config: requestId=${requestId}, timeout=${Math.round(timeoutMs / 1000)}s`);
+            logDebug(`[SubagentReceiver] responsePath=${responsePath}`);
+
+            logDebug(`[SubagentReceiver] Starting new chat...`);
+            await cdp.startNewChat();
+            logDebug(`[SubagentReceiver] New chat started. Sending prompt... (${subagentPrompt.length} chars)`);
+            await cdp.sendPrompt(subagentPrompt);
+            logInfo(`[SubagentReceiver] Prompt sent. Waiting for response (timeout=${Math.round(timeoutMs / 1000)}s)`);
+
+            const result = await fileIpc.waitForResponse(responsePath, timeoutMs);
+
+            const elapsedMs = Date.now() - handlerStartTime;
+            if (!result || result.trim().length === 0) {
+                logWarn(`[SubagentReceiver] ⚠️ Empty response (requestId=${requestId}, elapsed=${Math.round(elapsedMs / 1000)}s)`);
+                return t('bridge.cascadeEmptyResponse');
+            }
+
+            logInfo(`[SubagentReceiver] ✅ Response success: ${result.length} chars, ${Math.round(elapsedMs / 1000)}s (requestId=${requestId})`);
+            logDebug(`[SubagentReceiver] Response preview: ${result.substring(0, 200)}${result.length > 200 ? '...' : ''}`);
+            logInfo(`[SubagentReceiver] ────────── Processing Complete ──────────`);
+            return result;
+        } catch (e) {
+            const errMsg = e instanceof Error ? e.message : String(e);
+            const errStack = e instanceof Error ? e.stack : undefined;
+            const elapsedMs = Date.now() - handlerStartTime;
+            const isTimeout = errMsg.includes('timeout') || errMsg.includes('Timeout');
+            if (isTimeout) {
+                logError(`[SubagentReceiver] ❌ Timeout (${Math.round(elapsedMs / 1000)}s elapsed): ${errMsg}`);
+                logDebug(`[SubagentReceiver] Timeout stack: ${errStack || 'N/A'}`);
+                return t('bridge.cascadeTimeout', errMsg);
+            }
+            logError(`[SubagentReceiver] ❌ Error (${Math.round(elapsedMs / 1000)}s elapsed): ${errMsg}`, e);
+            logDebug(`[SubagentReceiver] Error stack: ${errStack || 'N/A'}`);
+            logInfo(`[SubagentReceiver] ────────── Processing Failed ──────────`);
+            return t('bridge.cascadeError', errMsg);
+        }
+    });
+    logInfo('Bridge: SubagentReceiver handler updated to Cascade integration (enhanced logging)');
+}
+
 async function startBridgeInternal(
     ctx: BridgeContext,
     context: vscode.ExtensionContext,
@@ -468,7 +548,9 @@ async function startBridgeInternal(
     ctx.cdp = new CdpBridge(responseTimeout, cdpPorts);
 
     // マルチウインドウ対応: 自ウィンドウのワークスペース名を設定して優先接続
-    const currentWorkspaceName = vscode.workspace.name;
+    const rawWorkspaceName = vscode.workspace.name;
+    const currentWorkspaceName = rawWorkspaceName ? extractWorkspaceName(rawWorkspaceName) : undefined;
+    const isSubagentMode = currentWorkspaceName ? SubagentReceiver.isSubagent(currentWorkspaceName) : false;
     if (currentWorkspaceName) {
         ctx.cdp.setPreferredWorkspace(currentWorkspaceName);
     }
@@ -569,6 +651,19 @@ async function startBridgeInternal(
         logWarn(`Bridge: CDP initial connect failed (will retry on first message): ${e instanceof Error ? e.message : e}`);
     }
 
+    // -----------------------------------------------------------------
+    // サブエージェントモード: ハンドラを設定して早期リターン
+    // （Bot/スケジューラ/SubagentManager/ダミークリーンアップ等のメイン処理は実行しない）
+    // -----------------------------------------------------------------
+    if (isSubagentMode) {
+        logInfo(`[Subagent] Initialising bridge in subagent mode: "${currentWorkspaceName}"`);
+        if (ctx.subagentReceiver && ctx.cdp && ctx.fileIpc) {
+            setupSubagentReceiverHandler(ctx.subagentReceiver, ctx.cdp, ctx.fileIpc);
+        }
+        logInfo(`[Subagent] Bridge initialisation complete for subagent "${currentWorkspaceName}"`);
+        return;
+    }
+
     // サマライズ Ops を memoryStore に注入（CDP + FileIpc が必要）
     if (ctx.cdp && ctx.fileIpc) {
         setSummarizeOps({
@@ -645,80 +740,7 @@ async function startBridgeInternal(
 
     // SubagentReceiver: Cascade 統合ハンドラを設定（startBridge 完了後に CDP/FileIpc が利用可能）
     if (ctx.subagentReceiver && ctx.cdp && ctx.fileIpc) {
-        const cdp = ctx.cdp;
-        const fileIpc = ctx.fileIpc;
-        ctx.subagentReceiver.setHandler(async (prompt: string) => {
-            const handlerStartTime = Date.now();
-            logInfo(`[SubagentReceiver] ────────── プロンプト受信 ──────────`);
-            logInfo(`[SubagentReceiver] プロンプト長: ${prompt.length} chars`);
-            logInfo(`[SubagentReceiver] プロンプトプレビュー: ${prompt.substring(0, 150)}${prompt.length > 150 ? '...' : ''}`);
-            try {
-                // FileIpc のレスポンスパスを先に生成
-                const wsName = vscode.workspace.name ?? 'subagent';
-                const repoRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-                const teamConfig = repoRoot ? loadTeamConfig(repoRoot) : null;
-                const timeoutMs = teamConfig?.responseTimeoutMs ?? 900_000; // デフォルト15分
-                const { requestId, responsePath } = fileIpc.createMarkdownRequestId(wsName);
-
-                // instruction.json ファイルを生成（共通ヘルパー使用）
-                const ipcDir = fileIpc.getIpcDir();
-                const instructionPath = require('path').join(ipcDir, `${requestId}_instruction.json`);
-                const progressPath = require('path').join(ipcDir, `${requestId}_progress.json`);
-
-                const { writeInstructionJson } = require('./instructionBuilder');
-                writeInstructionJson(instructionPath, {
-                    prompt,
-                    responsePath,
-                    progressPath,
-                    workspaceName: wsName,
-                });
-
-                // プロンプトはファイル読み込み指示のみ
-                const subagentPrompt =
-                    `以下のファイルを view_file ツールで読み込み、その指示に従ってください。` +
-                    `ファイルパス: ${instructionPath}`;
-
-                logInfo(`[SubagentReceiver] IPC設定: requestId=${requestId}, timeout=${Math.round(timeoutMs / 1000)}秒`);
-                logDebug(`[SubagentReceiver] responsePath=${responsePath}`);
-
-                // 新しいチャットを開始してプロンプト送信
-                logDebug(`[SubagentReceiver] 新しいチャットを開始中...`);
-                await cdp.startNewChat();
-                logDebug(`[SubagentReceiver] 新しいチャット開始完了。プロンプト送信中... (${subagentPrompt.length} chars)`);
-                await cdp.sendPrompt(subagentPrompt);
-                logInfo(`[SubagentReceiver] プロンプト送信完了。レスポンス待機開始 (timeout=${Math.round(timeoutMs / 1000)}秒)`);
-
-                // FileIpc 経由でレスポンスを待つ
-                const result = await fileIpc.waitForResponse(responsePath, timeoutMs);
-
-                // レスポンス内容の検証
-                const elapsedMs = Date.now() - handlerStartTime;
-                if (!result || result.trim().length === 0) {
-                    logWarn(`[SubagentReceiver] ⚠️ レスポンス空 (requestId=${requestId}, elapsed=${Math.round(elapsedMs / 1000)}秒)`);
-                    return t('bridge.cascadeEmptyResponse');
-                }
-
-                logInfo(`[SubagentReceiver] ✅ レスポンス成功: ${result.length} chars, ${Math.round(elapsedMs / 1000)}秒 (requestId=${requestId})`);
-                logDebug(`[SubagentReceiver] レスポンス先頭200文字: ${result.substring(0, 200)}${result.length > 200 ? '...' : ''}`);
-                logInfo(`[SubagentReceiver] ────────── 処理完了 ──────────`);
-                return result;
-            } catch (e) {
-                const errMsg = e instanceof Error ? e.message : String(e);
-                const errStack = e instanceof Error ? e.stack : undefined;
-                const elapsedMs = Date.now() - handlerStartTime;
-                const isTimeout = errMsg.includes('timeout') || errMsg.includes('Timeout');
-                if (isTimeout) {
-                    logError(`[SubagentReceiver] ❌ タイムアウト (${Math.round(elapsedMs / 1000)}秒経過): ${errMsg}`);
-                    logDebug(`[SubagentReceiver] タイムアウト詳細スタック: ${errStack || 'N/A'}`);
-                    return t('bridge.cascadeTimeout', errMsg);
-                }
-                logError(`[SubagentReceiver] ❌ エラー (${Math.round(elapsedMs / 1000)}秒経過): ${errMsg}`, e);
-                logDebug(`[SubagentReceiver] エラー詳細スタック: ${errStack || 'N/A'}`);
-                logInfo(`[SubagentReceiver] ────────── 処理失敗 ──────────`);
-                return t('bridge.cascadeError', errMsg);
-            }
-        });
-        logInfo('Bridge: SubagentReceiver handler updated to Cascade integration (enhanced logging)');
+        setupSubagentReceiverHandler(ctx.subagentReceiver, ctx.cdp, ctx.fileIpc);
     }
 
     // ワークスペースパス自動保存（全ウィンドウ共通 — Bot Owner 以外でも実行）

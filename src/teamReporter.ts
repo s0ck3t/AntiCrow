@@ -36,14 +36,14 @@ export function writeReportInstructionFile(
     const instructionPath = path.join(ipcDir, `tmp_exec_anti-crow_req_${teamRequestId}_report.json`);
     const progressPath = path.join(ipcDir, `req_${teamRequestId}_report_progress.json`);
 
-    // 共通ヘルパーで instruction.json を構築
+    // Build instruction.json using shared helper
     const fileContent = buildInstructionContent({
-        prompt: '全サブエージェントの報告を確認し、統合レポートを作成してください。\n\n' +
-            '1. report_path (context.report_path) のファイルを view_file ツールで読み込んでください\n' +
-            '2. 全サブエージェントの報告を確認してください\n' +
-            '3. 統合レポートを作成し、output.response_path に Markdown で書き込んでください（write_to_file）\n' +
-            '4. レポートにはすべてのタスクの結果・成否・注意点をまとめてください\n' +
-            '5. ユーザー向けにわかりやすい報告書を作成してください',
+        prompt: 'Review all subagent reports and synthesise a consolidated report.\n\n' +
+            '1. Read the report_path (context.report_path) file using the view_file tool\n' +
+            '2. Review reports from all subagents\n' +
+            '3. Generate a consolidated report and write it to output.response_path in Markdown format (write_to_file)\n' +
+            '4. Summarise results, success/failure status, and important notes for all tasks\n' +
+            '5. Structure the report clearly for the user',
         context: {
             role: 'main_agent_report',
             report_path: reportPath,

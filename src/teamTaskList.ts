@@ -31,16 +31,16 @@ export function generateSharedTaskList(
         requestId,
         createdAt: Date.now(),
         _guide: {
-            description: 'チーム全体のタスク一覧。各サブエージェントは自分のタスク完了後にこのファイルを確認し、pendingタスクがあれば手伝う。',
+            description: 'Team-wide task list. Each subagent reviews this file upon completing their primary task and helps with any pending tasks.',
             statusValues: {
-                pending: '未着手（手伝い可能）',
-                in_progress: '作業中（他エージェントが担当中。ファイルを上書きしないこと）',
-                completed: '完了',
-                failed: '失敗',
-                helped: 'オーケストレーターがヘルプを割り当て済み',
-                helping: '他エージェントがヘルプ中',
+                pending: 'Pending (available for assistance)',
+                in_progress: 'In progress (being handled by another agent; do not overwrite files)',
+                completed: 'Completed',
+                failed: 'Failed',
+                helped: 'Help assigned by orchestrator',
+                helping: 'Assistance in progress by another agent',
             },
-            howToHelp: '1. statusがpendingのタスクを探す → 2. fullTaskの内容を実行 → 3. 他エージェントのファイルは上書きしない',
+            howToHelp: '1. Find tasks with status "pending" → 2. Execute fullTask instructions → 3. Never overwrite files being edited by other agents',
         },
         tasks: instructions.map(inst => ({
             agentIndex: inst.agentIndex,
@@ -54,7 +54,7 @@ export function generateSharedTaskList(
     };
 
     fs.writeFileSync(taskListPath, JSON.stringify(taskList, null, 2), 'utf-8');
-    logInfo(`[TeamTaskList] 共有タスクリスト生成: ${taskListPath} (${instructions.length} タスク)`);
+    logInfo(`[TeamTaskList] Shared task list generated: ${taskListPath} (${instructions.length} task(s))`);
     return taskListPath;
 }
 
@@ -176,22 +176,21 @@ export async function pollTaskListStatus(
                 }
             }
 
-            // 変化があれば Discord に通知
+            // Notify Discord on changes
             if (changes.length > 0) {
                 for (const change of changes) {
                     const emoji = STATUS_EMOJI[change.newStatus] || '🔔';
-                    // completed の通知は既存の完了通知と重複するためスキップ
                     if (change.newStatus === 'completed') continue;
 
                     let msg = '';
                     if (change.newStatus === 'in_progress') {
-                        msg = `${emoji} サブエージェント${change.agentIndex} がタスクを開始しました`;
+                        msg = `${emoji} Subagent ${change.agentIndex} started their task`;
                     } else if (change.newStatus === 'helped') {
-                        msg = `${emoji} サブエージェント${change.agentIndex} のタスクにヘルプが入りました`;
+                        msg = `${emoji} Help assigned for Subagent ${change.agentIndex}'s task`;
                     } else if (change.newStatus === 'failed') {
-                        msg = `${emoji} サブエージェント${change.agentIndex} のタスクが失敗しました`;
+                        msg = `${emoji} Subagent ${change.agentIndex}'s task failed`;
                     } else {
-                        msg = `${emoji} サブエージェント${change.agentIndex}: ${change.oldStatus} → ${change.newStatus}`;
+                        msg = `${emoji} Subagent ${change.agentIndex}: ${change.oldStatus} → ${change.newStatus}`;
                     }
                     await sendToDiscord(channelId, msg);
                 }
@@ -243,5 +242,5 @@ export function buildProgressSummary(
     if (counts['helped']) parts.push(`🤝 helped: ${counts['helped']}`);
     if (counts['failed']) parts.push(`❌ failed: ${counts['failed']}`);
 
-    return `📊 進捗: ${parts.join(' | ')}`;
+    return `📊 Progress: ${parts.join(' | ')}`;
 }

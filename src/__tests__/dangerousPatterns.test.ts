@@ -147,7 +147,7 @@ describe('DANGEROUS_PATTERNS', () => {
 
         // allowPatterns テスト
         describe('allowPatterns（除外リスト）', () => {
-            const rmPattern = fsPatterns.find(p => p.reason === '再帰的ファイル削除')!;
+            const rmPattern = fsPatterns.find(p => p.reason === 'Recursive file deletion')!;
 
             it('should have allowPatterns defined for rm -rf', () => {
                 expect(rmPattern.allowPatterns).toBeDefined();
@@ -243,7 +243,7 @@ describe('DANGEROUS_PATTERNS', () => {
 
         // git clean allowPatterns テスト
         describe('allowPatterns（除外リスト）', () => {
-            const cleanPattern = gitPatterns.find(p => p.reason === '未追跡ファイルの強制削除')!;
+            const cleanPattern = gitPatterns.find(p => p.reason === 'Forced deletion of untracked files')!;
 
             it('should have allowPatterns defined for git clean', () => {
                 expect(cleanPattern.allowPatterns).toBeDefined();

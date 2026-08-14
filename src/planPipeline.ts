@@ -111,8 +111,7 @@ export async function acquireCdpConnection(
             if (wsNameFromCategory && actualWsName && actualWsName !== wsNameFromCategory) {
                 logWarn(`acquireCdpConnection: workspace mismatch — requested="${wsNameFromCategory}", actual="${actualWsName}". Message will be processed in "${actualWsName}".`);
                 await channel.send({ embeds: [buildEmbed(
-                    `⚠️ ワークスペース「${wsNameFromCategory}」を要求しましたが、実際の接続先は「${actualWsName}」です。\n` +
-                    `別ウィンドウで「${wsNameFromCategory}」を開いてください。`,
+                    t('pipeline.workspaceMismatch', wsNameFromCategory, actualWsName),
                     EmbedColor.Warning,
                 )] });
             }
@@ -198,7 +197,7 @@ export async function generatePlan(
                     logDebug(`handleDiscordMessage: retrying sendPrompt (attempt ${attempt}/${maxRetries})...`);
                     await new Promise(r => setTimeout(r, 5_000));
                 }
-                await activeCdp.sendPrompt(planPrompt);
+                await activeCdp.sendPrompt(planPrompt, wsNameForMeta);
                 break;
             } catch (retryErr) {
                 if (retryErr instanceof CascadePanelError && attempt < maxRetries) {
@@ -276,31 +275,31 @@ export async function generatePlan(
             const retryProgressPath = fileIpc.createProgressPath(retryReqId);
 
             const retryPrompt =
-                `【重要】前回の応答が JSON としてパースできませんでした。再度、正しい JSON 形式で出力してください。\n\n` +
-                `## 必須ルール\n` +
-                `1. write_to_file ツールで以下のレスポンスファイルに JSON オブジェクトのみを書き込むこと\n` +
-                `   レスポンスファイルパス: ${retryResponsePath}\n` +
-                `2. JSON オブジェクトは { で始まり } で終わること。それ以外のテキストを含めないこと\n` +
-                `3. 以下のフィールドは必須: plan_id, timezone, cron, prompt, requires_confirmation, discord_templates, prompt_summary\n\n` +
-                `## JSON スキーマの最小例\n` +
+                `[IMPORTANT] Your previous response could not be parsed as JSON. Please output valid JSON again.\n\n` +
+                `## Mandatory Rules\n` +
+                `1. Use the write_to_file tool to write ONLY the JSON object to the response file below\n` +
+                `   Response file path: ${retryResponsePath}\n` +
+                `2. The JSON object must start with { and end with }. Do not include any other text\n` +
+                `3. The following fields are required: plan_id, timezone, cron, prompt, requires_confirmation, discord_templates, prompt_summary\n\n` +
+                `## Minimal JSON Schema Example\n` +
                 `{\n` +
                 `  "plan_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",\n` +
-                `  "timezone": "Asia/Tokyo",\n` +
+                `  "timezone": "Europe/London",\n` +
                 `  "cron": "now",\n` +
-                `  "prompt": "実行するプロンプト内容",\n` +
+                `  "prompt": "Prompt content to execute",\n` +
                 `  "requires_confirmation": true,\n` +
                 `  "choice_mode": "none",\n` +
-                `  "discord_templates": { "ack": "承認メッセージ" },\n` +
-                `  "prompt_summary": "何をするかの要約"\n` +
+                `  "discord_templates": { "ack": "Confirmation message" },\n` +
+                `  "prompt_summary": "Summary of action"\n` +
                 `}\n\n` +
-                `## 禁止事項（NGパターン）\n` +
-                `- Markdown 見出し（#）や箇条書き（-）で始まるレスポンスは禁止\n` +
-                `- \\\`\\\`\\\`json ... \\\`\\\`\\\` のようなコードブロックで囲むことは禁止（JSON オブジェクトをそのまま書くこと）\n` +
-                `- 自然文や説明文を含めることは禁止\n` +
-                `- 絵文字（✅❌🔧等）で始まるレスポンスは禁止\n\n` +
-                `元のユーザーメッセージ: ${text}`;
+                `## Prohibited (NG patterns)\n` +
+                `- Do not start response with Markdown headings (#) or lists (-)\n` +
+                `- Do not wrap in code blocks like \`\`\`json ... \`\`\` (write the raw JSON object directly)\n` +
+                `- Do not include explanatory text or commentary\n` +
+                `- Do not start response with emojis\n\n` +
+                `Original user message: ${text}`;
 
-            await activeCdp.sendPrompt(retryPrompt);
+            await activeCdp.sendPrompt(retryPrompt, wsNameForMeta);
             logDebug('handleDiscordMessage: retry prompt sent, waiting for response...');
 
             const retryTypingInterval = setInterval(async () => {
@@ -546,12 +545,12 @@ export async function dispatchPlan(
                     logWarn(`dispatchPlan: Team mode — ${tooShortTasks.length}/${plan.tasks.length} tasks are too short (< ${MIN_TASK_LENGTH} chars): ${JSON.stringify(tooShortTasks)}`);
                     logWarn('dispatchPlan: This typically happens when AI outputs task numbers instead of full descriptions. Falling back to normal mode.');
                     await channel.send({ embeds: [buildEmbed(
-                        `⚠️ タスク記述が不十分なため、チームモードをスキップします（${tooShortTasks.length}件が${MIN_TASK_LENGTH}文字未満）。メインエージェントで実行します。`,
+                        `⚠️ Task descriptions were insufficient (< ${MIN_TASK_LENGTH} chars for ${tooShortTasks.length} task(s)). Skipping team mode and executing via the main agent.`,
                         EmbedColor.Warning,
                     )] });
-                    // tasks の内容を prompt に結合してフォールバック
+                    // Fall back by appending tasks to prompt
                     const taskList = plan.tasks.map((tk, i) => `${i + 1}. ${tk}`).join('\n');
-                    plan.prompt = `${plan.prompt}\n\n以下のタスクを順番に実行してください:\n${taskList}`;
+                    plan.prompt = `${plan.prompt}\n\nPlease execute the following tasks in order:\n${taskList}`;
                     plan.tasks = undefined as unknown as string[];
                     teamModeFallback = true;
                 }
@@ -615,8 +614,8 @@ export async function dispatchPlan(
                             reportResponsePath,
                         );
                         const reportPrompt =
-                            `あなたはメインエージェントです。以下のファイルを view_file ツールで読み込み、その指示に従ってください。` +
-                            `ファイルパス: ${reportInstructionPath}`;
+                            `You are the main agent. Please read the following file using the view_file tool and follow its instructions.` +
+                            `File path: ${reportInstructionPath}`;
 
                         logDebug(`dispatchPlan: Team mode — sending report prompt to main Cascade (${reportPrompt.length} chars)`);
 
@@ -625,7 +624,7 @@ export async function dispatchPlan(
 
                         // 既存チャットにそのまま報告プロンプトを送信（コンテキストを維持）
                         try {
-                            await activeCdp.sendPrompt(reportPrompt);
+                            await activeCdp.sendPrompt(reportPrompt, wsNameFromCategory ?? undefined);
                             logDebug('dispatchPlan: Team mode — report prompt sent, waiting for response...');
                         } catch (sendErr) {
                             logError(`dispatchPlan: Team mode — failed to send report prompt via CDP: ${sendErr instanceof Error ? sendErr.message : sendErr}`, sendErr);

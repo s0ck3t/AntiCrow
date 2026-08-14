@@ -97,7 +97,7 @@ describe('parsePlanJson', () => {
         });
         const result = parsePlanJson(raw);
         expect(result).not.toBeNull();
-        expect(result!.prompt).toBe('指示が欠落しています。再試行してください。');
+        expect(result!.prompt).toBe('Instruction missing. Please retry.');
     });
 
     it('should use defaults for missing discord_templates', () => {
@@ -110,8 +110,8 @@ describe('parsePlanJson', () => {
         });
         const result = parsePlanJson(raw);
         expect(result).not.toBeNull();
-        expect(result!.discord_templates.ack).toBe('✅ 計画を受け付けました。');
-        expect(result!.discord_templates.run_start).toBe('🚀 実行を開始します...');
+        expect(result!.discord_templates.ack).toBe('✅ Plan received.');
+        expect(result!.discord_templates.run_start).toBe('🚀 Starting execution...');
     });
 
     it('should return null for invalid JSON', () => {
@@ -163,7 +163,7 @@ describe('parsePlanJson', () => {
         });
         const result = parsePlanJson(raw);
         expect(result).not.toBeNull();
-        expect(result!.discord_templates.ack).toBe('✅ 計画を受け付けました。');
+        expect(result!.discord_templates.ack).toBe('✅ Plan received.');
         expect(result!.discord_templates.run_error).toBe('❌ Error');
     });
 
@@ -178,7 +178,7 @@ describe('parsePlanJson', () => {
         });
         const result = parsePlanJson(raw);
         expect(result).not.toBeNull();
-        expect(result!.discord_templates.ack).toBe('✅ 計画を受け付けました。');
+        expect(result!.discord_templates.ack).toBe('✅ Plan received.');
     });
 
     it('should parse when ack is empty string', () => {

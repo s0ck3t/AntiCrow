@@ -118,7 +118,17 @@ export class DiscordBot {
             // ワークスペースカテゴリー内の #agent-chat かチェック
             const wsName = DiscordBot.resolveWorkspaceFromChannel(channel);
             if (!wsName) {
-                logDebug(`Discord: ignoring message from non-category channel #${channelName}`);
+                if (channelName === 'agent-chat') {
+                    logWarn(`Discord: message received in #${channelName} but parent category "${channel.parent?.name || 'none'}" is not recognized`);
+                    await channel.send({
+                        embeds: [new EmbedBuilder()
+                            .setColor(0xfaad14)
+                            .setDescription('⚠️ This channel is not inside a recognised workspace category (e.g. `🤖 blender-mcp`). Please ensure it belongs to a project category, or use the category\'s `#agent-chat` channel.')
+                        ]
+                    }).catch(() => {});
+                } else {
+                    logDebug(`Discord: ignoring message from non-category channel #${channelName}`);
+                }
                 return;
             }
 

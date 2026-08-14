@@ -298,7 +298,7 @@ export class Executor {
             try {
                 // CDP 経由で Antigravity にプロンプト送信
                 try {
-                    await this.cdp.sendPrompt(cdpInstruction);
+                    await this.cdp.sendPrompt(cdpInstruction, job.plan.workspace_name);
                 } catch (sendErr) {
                     if (sendErr instanceof CdpConnectionError) {
                         logWarn(`Executor: sendPrompt failed due to connection error, attempting reconnect — ${sendErr.message}`);
@@ -306,7 +306,7 @@ export class Executor {
                         try {
                             await this.cdp.ensureConnected();
                             logDebug('Executor: reconnected successfully, retrying sendPrompt');
-                            await this.cdp.sendPrompt(cdpInstruction);
+                            await this.cdp.sendPrompt(cdpInstruction, job.plan.workspace_name);
                         } catch (reconnectErr) {
                             logError('Executor: reconnect + retry failed', reconnectErr);
                             throw reconnectErr;
@@ -770,7 +770,7 @@ export class Executor {
                 let stepResponse: string;
                 try {
                     // CDP 経由でプロンプト送信
-                    await this.cdp.sendPrompt(nextCdpInstruction);
+                    await this.cdp.sendPrompt(nextCdpInstruction, plan.workspace_name);
                     logDebug('Executor: autoModeContinueLoop — prompt sent, waiting for response...');
 
                     // 一時ファイルクリーンアップ

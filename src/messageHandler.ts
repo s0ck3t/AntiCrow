@@ -105,12 +105,12 @@ export async function handleDiscordMessage(
     logDebug(`handleDiscordMessage: channel="${channel.name}", parentCategory="${channel.parent?.name || 'none'}" (type=${channel.parent?.type}), wsNameFromCategory="${wsNameFromCategory || 'null'}"`);
     const { bot, fileIpc, planStore, scheduler, cdp, cdpPool, executor } = ctx;
     if (!fileIpc || !planStore || !scheduler || !bot) {
-        await channel.send({ embeds: [buildEmbed('⚠️ Bridge の内部モジュールが初期化されていません。', EmbedColor.Warning)] });
+        await channel.send({ embeds: [buildEmbed('⚠️ Bridge internal modules are not initialised.', EmbedColor.Warning)] });
         return;
     }
     const useCdpPool = !!cdpPool;
     if (!useCdpPool && (!cdp || !executor)) {
-        await channel.send({ embeds: [buildEmbed('⚠️ Antigravity との接続が初期化されていません。', EmbedColor.Warning)] });
+        await channel.send({ embeds: [buildEmbed('⚠️ Connection to Antigravity is not initialised.', EmbedColor.Warning)] });
         return;
     }
 
@@ -142,8 +142,8 @@ export async function handleDiscordMessage(
         }
     }
 
-    // メッセージプレビュー（ステータス追跡用）
-    const msgPreview = text.substring(0, 50) + (text.length > 50 ? '...' : '') || '（添付ファイル）';
+    // Message preview (for status tracking)
+    const msgPreview = text.substring(0, 50) + (text.length > 50 ? '...' : '') || ' (attachment)';
     const wsKeyForStatus = DiscordBot.resolveWorkspaceFromChannel(channel) || DEFAULT_WS_KEY;
 
     try {
@@ -167,10 +167,10 @@ export async function handleDiscordMessage(
             const currentMode = await getCurrentMode(activeCdp.ops).catch(() => null);
             activeCdp.ops.resetCascadeContext();
             const currentModel = await getCurrentModel(activeCdp.ops).catch(() => null);
-            if (currentModel) { ctx.bot?.setModelName(currentModel); }
             const parts = [currentMode, currentModel].filter(Boolean);
             const ackPrefix = parts.length > 0 ? `[${parts.join(' - ')}]` : '';
-            await channel.send({ embeds: [buildEmbed(`🔄 ${ackPrefix} 伝令中...`, EmbedColor.Info)] });
+            const procText = t('pipeline.processing');
+            await channel.send({ embeds: [buildEmbed(`🔄 ${ackPrefix} ${procText}`.trim(), EmbedColor.Info)] });
         } catch (sendErr) {
             logError('handleDiscordMessage: failed to send acknowledgement', sendErr);
         }
@@ -202,17 +202,17 @@ export async function handleDiscordMessage(
 
 
 
-        // 計画詳細を Discord に表示
+        // Display plan details in Discord
         try {
             const summaryText = plan.action_summary || plan.discord_templates.ack || plan.human_summary
                 || plan.prompt.substring(0, 100) + (plan.prompt.length > 100 ? '...' : '');
             const lines: string[] = [];
-            lines.push(`📋 **概要:** ${summaryText}`);
+            lines.push(`📋 **Summary:** ${summaryText}`);
 
-            // タスク一覧
+            // Task list
             if (plan.tasks && plan.tasks.length > 0) {
                 lines.push('');
-                lines.push('**タスク:**');
+                lines.push('**Tasks:**');
                 for (let i = 0; i < plan.tasks.length; i++) {
                     const task = plan.tasks[i];
                     const preview = task.length > 80 ? task.substring(0, 80) + '...' : task;
@@ -220,10 +220,10 @@ export async function handleDiscordMessage(
                 }
             }
 
-            // 対象ファイル
+            // Target files
             if (plan.affected_files && plan.affected_files.length > 0) {
                 lines.push('');
-                lines.push('**対象ファイル:**');
+                lines.push('**Target Files:**');
                 for (const file of plan.affected_files) {
                     lines.push(`- \`${file}\``);
                 }
@@ -268,10 +268,10 @@ export async function handleDiscordMessage(
             applyChoiceSelection(plan, confirmResult.selectedChoices);
         }
 
-        // チームモード: サブエージェント向けのタスク指示を付加
+        // Team mode: attach task instruction for subagents
         if (isTeamMode) {
-            plan.prompt = `【サブエージェントタスク】以下のタスクを実行してください。\n` +
-                `結果は明確かつ詳細に記述してください。\n\n` +
+            plan.prompt = `[Subagent Task] Please execute the following task.\n` +
+                `Provide a clear and detailed description of the results.\n\n` +
                 plan.prompt;
             logDebug(`handleDiscordMessage: Team mode — augmented prompt with subagent instructions`);
         }
@@ -311,7 +311,7 @@ export async function handleDiscordMessage(
             logDebug(`handleDiscordMessage: aborted (expected via /stop)`);
         } else {
             logError('handleDiscordMessage failed', e);
-            await channel.send({ embeds: [buildEmbed(`❌ エラー: ${sanitizeErrorForDiscord(errMsg)}`, EmbedColor.Error)] });
+            await channel.send({ embeds: [buildEmbed(t('bot.error', sanitizeErrorForDiscord(errMsg)), EmbedColor.Error)] });
         }
     } finally {
         // 処理完了時にステータスをクリア
@@ -379,9 +379,9 @@ export async function processSuggestionPrompt(
     const currentQueue = getWorkspaceQueue(wsKey);
     const task = currentQueue.then(async () => {
         try {
-            // ACK 送信
+            // Send ACK
             try {
-                await channel.send({ embeds: [buildEmbed('💡 提案されたタスクを実行中...', EmbedColor.Info)] });
+                await channel.send({ embeds: [buildEmbed('💡 Executing suggested task...', EmbedColor.Info)] });
             } catch { /* ignore */ }
 
             // ワークスペース解決（カテゴリーから特定）
@@ -401,14 +401,14 @@ export async function processSuggestionPrompt(
                     logError(`processSuggestionPrompt: failed to acquire CdpBridge for workspace "${wsNameFromCategory}"`, e);
                     const displayMsg = (e instanceof WorkspaceConnectionError)
                         ? e.userMessage
-                        : `ワークスペース "${wsNameFromCategory}" への接続に失敗しました: ${sanitizeErrorForDiscord(e instanceof Error ? e.message : String(e))}`;
+                        : `Failed to connect to workspace "${wsNameFromCategory}": ${sanitizeErrorForDiscord(e instanceof Error ? e.message : String(e))}`;
                     await channel.send({ embeds: [buildEmbed(`⚠️ ${displayMsg}`, EmbedColor.Warning)] });
                     return;
                 }
             } else if (fallbackCdp) {
                 activeCdp = fallbackCdp;
             } else {
-                await channel.send({ embeds: [buildEmbed('⚠️ Bridge が未接続です。`/status` を確認してください。', EmbedColor.Warning)] });
+                await channel.send({ embeds: [buildEmbed('⚠️ Bridge is not connected. Please check `/status`.', EmbedColor.Warning)] });
                 return;
             }
 
@@ -467,10 +467,10 @@ export async function processSuggestionPrompt(
                 }
             }
 
-            // チームモード: サブエージェント向けのタスク指示を付加（handleDiscordMessage L280-285 と同等）
+            // Team mode: attach subagent task instructions
             if (suggestionTeamMode) {
-                plan.prompt = `【サブエージェントタスク】以下のタスクを実行してください。\n` +
-                    `結果は明確かつ詳細に記述してください。\n\n` +
+                plan.prompt = `[Subagent Task] Please execute the following task.\n` +
+                    `Provide a clear and detailed description of the results.\n\n` +
                     plan.prompt;
                 logDebug(`processSuggestionPrompt: Team mode — augmented prompt with subagent instructions`);
             }
@@ -482,7 +482,7 @@ export async function processSuggestionPrompt(
         } catch (e) {
             logError('processSuggestionPrompt failed', e);
             const errMsg = e instanceof Error ? e.message : String(e);
-            await channel.send({ embeds: [buildEmbed(`❌ エラー: ${sanitizeErrorForDiscord(errMsg)}`, EmbedColor.Error)] });
+            await channel.send({ embeds: [buildEmbed(t('bot.error', sanitizeErrorForDiscord(errMsg)), EmbedColor.Error)] });
         } finally {
             const count = getQueueCount(wsKey);
             setQueueCount(wsKey, Math.max(0, count - 1));

@@ -818,6 +818,7 @@ export const messages = {
   'pipeline.replyHeader': '返信先メッセージ（{0} の発言）',
   'pipeline.replyInstruction': '上記メッセージに対する指示',
   'pipeline.launching': '🚀 ワークスペース "{0}" を起動中です。しばらくお待ちください...',
+  'pipeline.workspaceMismatch': '⚠️ ワークスペース「{0}」を要求しましたが、実際の接続先は「{1}」です。\n別ウィンドウで「{0}」を開いてください。',
   'pipeline.connectionFailed': 'ワークスペース "{0}" への接続に失敗しました: {1}',
   'pipeline.checkAttachments': '（添付ファイルを確認してください）',
   'pipeline.planGenerating': '✅ 伝令完了。計画を練っています...',

@@ -105,18 +105,18 @@ export function parsePlanJson(raw: string): PlanOutput | null {
     // requires_confirmation が欠落している場合は false をデフォルト値として使用
     const requiresConfirmation = typeof o.requires_confirmation === 'boolean' ? o.requires_confirmation : false;
 
-    // discord_templates の堅牢なパースとフォールバック
+    // Robust parsing and fallback for discord_templates
     const dt = o.discord_templates;
     const dtObj = (typeof dt === 'object' && dt !== null) ? dt as Record<string, unknown> : {};
     const templates: DiscordTemplates = {
-        ack: typeof dtObj.ack === 'string' ? dtObj.ack : '✅ 計画を受け付けました。',
-        confirm: typeof dtObj.confirm === 'string' ? dtObj.confirm : '以下の計画を実行しますか？',
-        run_start: typeof dtObj.run_start === 'string' ? dtObj.run_start : '🚀 実行を開始します...',
-        run_success_prefix: typeof dtObj.run_success_prefix === 'string' ? dtObj.run_success_prefix : '✅ 実行完了:\n',
-        run_error: typeof dtObj.run_error === 'string' ? dtObj.run_error : '❌ エラーが発生しました:\n',
+        ack: typeof dtObj.ack === 'string' ? dtObj.ack : '✅ Plan received.',
+        confirm: typeof dtObj.confirm === 'string' ? dtObj.confirm : 'Do you want to execute the following plan?',
+        run_start: typeof dtObj.run_start === 'string' ? dtObj.run_start : '🚀 Starting execution...',
+        run_success_prefix: typeof dtObj.run_success_prefix === 'string' ? dtObj.run_success_prefix : '✅ Execution completed:\n',
+        run_error: typeof dtObj.run_error === 'string' ? dtObj.run_error : '❌ An error occurred:\n',
     };
 
-    // choice_mode（オプション）
+    // choice_mode (optional)
     const validChoiceModes: ChoiceMode[] = ['none', 'single', 'multi', 'all'];
     const choiceMode = typeof o.choice_mode === 'string' && validChoiceModes.includes(o.choice_mode as ChoiceMode)
         ? o.choice_mode as ChoiceMode
@@ -124,9 +124,9 @@ export function parsePlanJson(raw: string): PlanOutput | null {
 
     return {
         plan_id: o.plan_id as string,
-        timezone: typeof o.timezone === 'string' ? o.timezone : getTimezone(), // デフォルトフォールバック
-        cron: typeof o.cron === 'string' ? o.cron : '', // デフォルトで即時実行
-        prompt: typeof o.prompt === 'string' ? o.prompt : '指示が欠落しています。再試行してください。', // デフォルトフォールバック
+        timezone: typeof o.timezone === 'string' ? o.timezone : getTimezone(), // Default fallback
+        cron: typeof o.cron === 'string' ? o.cron : '', // Default to immediate execution
+        prompt: typeof o.prompt === 'string' ? o.prompt : 'Instruction missing. Please retry.', // Default fallback
         requires_confirmation: requiresConfirmation,
         choice_mode: choiceMode,
         discord_templates: templates,

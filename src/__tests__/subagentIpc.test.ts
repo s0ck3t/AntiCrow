@@ -34,8 +34,13 @@ import {
     writePrompt,
     writeResponse,
     watchResponse,
+    writeReady,
+    writeHeartbeat,
+    watchReady,
+    isAgentAliveIpc,
+    cleanupAgentIpc,
 } from '../subagentIpc';
-import type { SubagentPrompt, SubagentResponse } from '../subagentTypes';
+import type { SubagentPrompt, SubagentResponse, SubagentReady } from '../subagentTypes';
 
 // ---------------------------------------------------------------------------
 // validateIpcPath
@@ -164,7 +169,7 @@ describe('writePrompt', () => {
             callback_path: path.join(tmpDir, 'cb.json'),
         };
 
-        expect(() => writePrompt(tmpDir, prompt)).toThrow('無効なエージェント名');
+        expect(() => writePrompt(tmpDir, prompt)).toThrow('Invalid agent name');
     });
 
     it('存在しないディレクトリを自動作成する', () => {
@@ -229,7 +234,7 @@ describe('writeResponse', () => {
             execution_time_ms: 100,
         };
 
-        expect(() => writeResponse(callbackPath, response, tmpDir)).toThrow('パストラバーサル検出');
+        expect(() => writeResponse(callbackPath, response, tmpDir)).toThrow('Path traversal detected');
     });
 });
 
@@ -323,3 +328,156 @@ describe('watchResponse', () => {
         expect(result).toBeNull();
     });
 });
+
+// ---------------------------------------------------------------------------
+// writeReady
+// ---------------------------------------------------------------------------
+
+describe('writeReady', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ipc-ready-'));
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('正常な準備完了通知を書き込める', () => {
+        const ready: SubagentReady = {
+            type: 'subagent_ready',
+            name: 'agent-1',
+            timestamp: Date.now(),
+            pid: 12345,
+        };
+
+        const result = writeReady(tmpDir, ready);
+        expect(fs.existsSync(result)).toBe(true);
+
+        const written = JSON.parse(fs.readFileSync(result, 'utf-8'));
+        expect(written.type).toBe('subagent_ready');
+        expect(written.name).toBe('agent-1');
+        expect(written.pid).toBe(12345);
+    });
+
+    it('無効なエージェント名でエラーを投げる', () => {
+        const ready: SubagentReady = {
+            type: 'subagent_ready',
+            name: 'invalid/name',
+            timestamp: Date.now(),
+        };
+
+        expect(() => writeReady(tmpDir, ready)).toThrow('Invalid agent name');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// watchReady
+// ---------------------------------------------------------------------------
+
+describe('watchReady', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ipc-wready-'));
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('準備完了ファイルを検知して true を返す', async () => {
+        setTimeout(() => {
+            writeReady(tmpDir, {
+                type: 'subagent_ready',
+                name: 'agent-ready-test',
+                timestamp: Date.now(),
+            });
+        }, 100);
+
+        const ready = await watchReady(tmpDir, 'agent-ready-test', 3000, 50);
+        expect(ready).toBe(true);
+    });
+
+    it('既にファイルが存在する場合即座に true を返す', async () => {
+        writeReady(tmpDir, {
+            type: 'subagent_ready',
+            name: 'agent-already-ready',
+            timestamp: Date.now(),
+        });
+
+        const start = Date.now();
+        const ready = await watchReady(tmpDir, 'agent-already-ready', 3000, 50);
+        const elapsed = Date.now() - start;
+
+        expect(ready).toBe(true);
+        expect(elapsed).toBeLessThan(1000);
+    });
+
+    it('タイムアウト時に false を返す', async () => {
+        const ready = await watchReady(tmpDir, 'never-ready-agent', 300, 50);
+        expect(ready).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// writeHeartbeat & isAgentAliveIpc & cleanupAgentIpc
+// ---------------------------------------------------------------------------
+
+describe('writeHeartbeat & isAgentAliveIpc & cleanupAgentIpc', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ipc-hb-'));
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('ハートビートを書き込み生存を確認できる', () => {
+        writeHeartbeat(tmpDir, 'agent-hb');
+        expect(isAgentAliveIpc(tmpDir, 'agent-hb', 10000)).toBe(true);
+    });
+
+    it('古いハートビートは生存と判定されない', () => {
+        const hbPath = path.join(tmpDir, 'subagent_agent-old_heartbeat.json');
+        const oldTimestamp = Date.now() - 60000;
+        fs.writeFileSync(hbPath, JSON.stringify({ name: 'agent-old', timestamp: oldTimestamp }), 'utf-8');
+
+        // mtime を過去に設定
+        const past = new Date(oldTimestamp);
+        fs.utimesSync(hbPath, past, past);
+
+        expect(isAgentAliveIpc(tmpDir, 'agent-old', 30000)).toBe(false);
+    });
+
+    it('準備完了ファイルのみでも生存と判定される', () => {
+        writeReady(tmpDir, {
+            type: 'subagent_ready',
+            name: 'agent-ready-only',
+            timestamp: Date.now(),
+        });
+
+        expect(isAgentAliveIpc(tmpDir, 'agent-ready-only', 10000)).toBe(true);
+    });
+
+    it('cleanupAgentIpc で準備完了とハートビートファイルが削除される', () => {
+        writeReady(tmpDir, {
+            type: 'subagent_ready',
+            name: 'agent-clean',
+            timestamp: Date.now(),
+        });
+        writeHeartbeat(tmpDir, 'agent-clean');
+
+        expect(isAgentAliveIpc(tmpDir, 'agent-clean')).toBe(true);
+
+        cleanupAgentIpc(tmpDir, 'agent-clean');
+
+        expect(isAgentAliveIpc(tmpDir, 'agent-clean')).toBe(false);
+        expect(fs.existsSync(path.join(tmpDir, 'subagent_agent-clean_ready.json'))).toBe(false);
+        expect(fs.existsSync(path.join(tmpDir, 'subagent_agent-clean_heartbeat.json'))).toBe(false);
+    });
+});
+

@@ -280,7 +280,7 @@ describe('チームモード E2E テスト', () => {
             expect(result.length).toBe(3);
             // 各グループにサブタスクが含まれていることを確認
             for (const group of result) {
-                expect(group).toContain('サブタスク');
+                expect(group).toContain('Subtask');
             }
             console.log('groupTasks結果 (6→3):', result);
         });

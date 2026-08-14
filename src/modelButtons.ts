@@ -54,25 +54,25 @@ export function buildModelListEmbed(
     quotas?: ModelQuota[],
 ): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
     const embed = new EmbedBuilder()
-        .setTitle('🤖 モデル管理')
+        .setTitle('🤖 Model Management')
         .setColor(0x5865F2)
         .setTimestamp();
 
     if (models.length === 0 && !currentModel) {
         embed.setDescription(
-            'モデル情報を取得できませんでした。\n' +
-            'チャットパネルが開いていることを確認してください。',
+            'Could not retrieve model information.\n' +
+            'Please ensure the chat panel is open.',
         );
         return { embeds: [embed], components: [] };
     }
 
-    // 現在のモデル
-    const currentDisplay = currentModel || '不明';
+    // Current model
+    const currentDisplay = currentModel || 'Unknown';
     const currentQuota = currentModel ? findQuota(currentModel, quotas) : undefined;
     const currentExtra = currentQuota ? ` (${quotaEmoji(currentQuota.remainingPercentage)} ${currentQuota.remainingPercentage}%${formatResetTime(currentQuota)})` : '';
-    embed.setDescription(`**現在のモデル:** ${currentDisplay}${currentExtra}`);
+    embed.setDescription(`**Current Model:** ${currentDisplay}${currentExtra}`);
 
-    // モデル一覧をフィールドに追加
+    // Add models list to field
     if (models.length > 0) {
         const normalizedCurrent = currentModel?.trim().toLowerCase() || '';
         const modelList = models.map((m) => {
@@ -88,19 +88,19 @@ export function buildModelListEmbed(
         }).join('\n');
 
         embed.addFields({
-            name: `📋 利用可能なモデル (${models.length}件)`,
+            name: `📋 Available Models (${models.length})`,
             value: modelList.length > 1024 ? modelList.substring(0, 1021) + '...' : modelList,
         });
     }
 
-    // ボタン作成（各モデルに切替ボタン）
+    // Create buttons (switch button per model)
     const components: ActionRowBuilder<ButtonBuilder>[] = [];
 
-    // モデルを5個ずつの ActionRow にまとめる（1行5ボタン × 最大4行 = 20モデル）
+    // Group models into ActionRows of 5 (1 row = 5 buttons, max 4 rows = 20 models)
     const normalizedCurrentBtn = currentModel?.trim().toLowerCase() || '';
-    const displayModels = models.slice(0, 20); // Discord 上限を考慮
+    const displayModels = models.slice(0, 20);
     for (let i = 0; i < displayModels.length; i += 5) {
-        if (components.length >= 4) break; // リフレッシュ用に1行確保
+        if (components.length >= 4) break; // Reserve 1 row for refresh
 
         const row = new ActionRowBuilder<ButtonBuilder>();
         const chunk = displayModels.slice(i, i + 5);
@@ -113,7 +113,7 @@ export function buildModelListEmbed(
                 modelLower.includes(normalizedCurrentBtn) ||
                 normalizedCurrentBtn.includes(modelLower)
             );
-            // インデックスベースの custom_id で一意性を保証（モデル名重複問題を解消）
+            // Index-based custom_id for uniqueness
             const modelIndex = i + j;
 
             row.addComponents(
@@ -128,12 +128,12 @@ export function buildModelListEmbed(
         components.push(row);
     }
 
-    // リフレッシュボタン
+    // Refresh button
     if (components.length < 5) {
         const refreshRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
                 .setCustomId('model_refresh')
-                .setLabel('🔄 更新')
+                .setLabel('🔄 Refresh')
                 .setStyle(ButtonStyle.Primary),
         );
         components.push(refreshRow);
@@ -143,7 +143,7 @@ export function buildModelListEmbed(
 }
 
 // -----------------------------------------------------------------------
-// モデル切替結果 Embed
+// Model Switch Result Embed
 // -----------------------------------------------------------------------
 
 export function buildModelSwitchResultEmbed(
@@ -152,16 +152,16 @@ export function buildModelSwitchResultEmbed(
 ): EmbedBuilder {
     if (success) {
         return new EmbedBuilder()
-            .setTitle('✅ モデルを切り替えました')
-            .setDescription(`**${modelName}** に切り替えました。`)
+            .setTitle('✅ Model Switched')
+            .setDescription(`Switched to **${modelName}**.`)
             .setColor(0x57F287)
             .setTimestamp();
     } else {
         return new EmbedBuilder()
-            .setTitle('❌ モデル切替に失敗')
+            .setTitle('❌ Model Switch Failed')
             .setDescription(
-                `**${modelName}** への切り替えに失敗しました。\n` +
-                'チャットパネルが開いていることを確認し、もう一度お試しください。',
+                `Failed to switch to **${modelName}**.\n` +
+                'Please ensure the chat panel is open and try again.',
             )
             .setColor(0xED4245)
             .setTimestamp();

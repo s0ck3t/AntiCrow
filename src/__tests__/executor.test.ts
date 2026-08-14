@@ -556,7 +556,7 @@ describe('Executor', () => {
 
             // 再接続通知が送信されているはず
             const reconnectCalls = notifyDiscord.mock.calls.filter(
-                (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('再接続'));
+                (call: unknown[]) => typeof call[1] === 'string' && ((call[1] as string).includes('Reconnecting') || (call[1] as string).includes('再接続')));
             expect(reconnectCalls.length).toBeGreaterThanOrEqual(1);
         });
     });
@@ -719,7 +719,7 @@ describe('Executor', () => {
 
             // execution_summary が通知されているはず
             const detailCalls = notifyDiscord.mock.calls.filter(
-                (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('実行内容'));
+                (call: unknown[]) => typeof call[1] === 'string' && ((call[1] as string).includes('Execution Details') || (call[1] as string).includes('実行内容')));
             expect(detailCalls.length).toBeGreaterThanOrEqual(1);
         });
     });

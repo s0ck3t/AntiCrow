@@ -152,24 +152,19 @@ export async function handleMiscButton(
             return true;
         }
 
-        // 全SUGGESTIONSを初期プロンプトとして連続オートモード開始
+        // Start continuous auto mode with all suggestions as initial prompt
         const suggestionPrompts = suggestions.map((s, i) => `${i + 1}. ${s.label}: ${s.prompt}`).join('\n');
-        const autoPrompt = `以下の提案をすべて順番に実行してください:\n\n${suggestionPrompts}`;
+        const autoPrompt = `Please execute all of the following suggestions in sequence:\n\n${suggestionPrompts}`;
 
         const channel = interaction.channel;
         if (!channel || !('send' in channel)) {
-            await interaction.reply({ embeds: [buildEmbed('チャンネルが見つかりません', EmbedColor.Error)] });
+            await interaction.reply({ embeds: [buildEmbed('Channel not found', EmbedColor.Error)] });
             return true;
         }
 
-        await interaction.reply({ embeds: [buildEmbed('🔄 **連続オートモードを開始します...**\n提案をすべて順番に自動実行します', EmbedColor.Info)] });
+        await interaction.reply({ embeds: [buildEmbed('🔄 **Starting Continuous Auto Mode...**\nExecuting all suggestions automatically in sequence', EmbedColor.Info)] });
 
-        // ワークスペースキーの取得
-        // 重要: plan.workspace_name は DiscordBot.resolveWorkspaceFromChannel() で設定される
-        // カテゴリー名（例: "anti-crow"）と一致させる必要がある。
-        // vscode.workspace.workspaceFolders の fsPath（例: "c:\Users\...\anti-crow"）を使うと
-        // stateMap キーと plan.workspace_name が不一致になり、isAutoModeActive()=false →
-        // autoModeContinueLoop が起動せず、ステップ通知が送信されない。
+        // Resolve workspace key
         const { TextChannel: TC } = await import('discord.js');
         const resolvedWsName = (channel instanceof TC)
             ? DiscordBot.resolveWorkspaceFromChannel(channel as import('discord.js').TextChannel)
@@ -177,32 +172,31 @@ export async function handleMiscButton(
         const wsKey = resolvedWsName || suggestParsed.wsKey || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'default';
         logDebug(`suggest_auto_mode: wsKey resolved — resolvedWsName=${resolvedWsName}, suggestParsed.wsKey=${suggestParsed.wsKey}, final=${wsKey}`);
 
-        // 連続オートモード開始
+        // Start continuous auto mode
         const prompt = await startAutoMode(channel as any, wsKey, autoPrompt, { maxSteps: suggestions.length + 2 });
-        // プロンプトをパイプラインに投入
+        // Forward prompt to pipeline
         processSuggestionPrompt(ctx, channelId, prompt, interaction.user.id).catch((e: unknown) => {
             logError('suggest_auto_mode button: processSuggestionPrompt failed', e);
         });
         return true;
     }
 
-    // ----- 「エージェントに任せる」ボタン -----
+    // ----- "Let Agent Decide" button -----
     if (suggestParsed?.action === SUGGEST_AUTO_ID) {
         const channelId = interaction.channelId;
-        // 直前の提案を取得してプロンプトに含める
+        // Retrieve previous suggestions and include in prompt
         const suggestions = getAllSuggestions(channelId);
         let prompt = AUTO_PROMPT;
         if (suggestions && suggestions.length > 0) {
             const suggestionContext = suggestions.map((s, i) => `${i + 1}. ${s.label}: ${s.prompt}`).join('\n');
             prompt = t('misc.suggest.autoPromptPrefix', suggestionContext, AUTO_PROMPT);
         }
-        // チームモードが有効な場合、プロンプトにチーム活用の指示を追加
-        // wsKey が customId に埋め込まれている場合はそのパスを使用、なければフォールバック
+        // If team mode is enabled, add team instruction to prompt
         const repoRoot = suggestParsed.wsKey || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (repoRoot) {
             const teamConfig = loadTeamConfig(repoRoot);
             if (teamConfig.enabled) {
-                prompt += `\n\nエージェントチームモードが有効です（最大${teamConfig.maxAgents}エージェント）。タスクを分割して並列実行できる場合は、チームを有効活用してください。`;
+                prompt += `\n\nAgent team mode is enabled (max ${teamConfig.maxAgents} agents). If tasks can be split and run in parallel, make effective use of the team.`;
             }
         }
         await interaction.reply({ embeds: [buildEmbed(t('misc.suggest.auto'), EmbedColor.Info)] });

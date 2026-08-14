@@ -273,8 +273,8 @@ async function handleNewchat(ctx: BridgeContext, interaction: ChatInputCommandIn
             return;
         }
         if (cdp) {
-            await cdp.startNewChat();
-            logDebug('handleNewchat: new chat started via Ctrl+Shift+L');
+            await cdp.startNewChat(wsKey ?? undefined);
+            logDebug(`handleNewchat: new chat started for workspace "${wsKey}"`);
             const msg = autoLaunched
                 ? t('admin.common.autoLaunchSuccess', wsKey || '') + '\n' + t('admin.newchat.success')
                 : t('admin.newchat.success');
@@ -911,7 +911,7 @@ async function handleAutoMode(
         logWarn(`handleAutoMode: autoModeController not available yet: ${e instanceof Error ? e.message : e}`);
         await interaction.reply({
             embeds: [buildEmbed(
-                '⚠️ 連続オートモードコントローラーがまだ初期化されていません。\nautoModeController.ts のビルドを待ってください。',
+                '⚠️ Continuous Auto Mode controller is not yet initialised.\nPlease wait for autoModeController.ts to build.',
                 EmbedColor.Warning,
             )],
         });
@@ -919,7 +919,7 @@ async function handleAutoMode(
 }
 
 // ---------------------------------------------------------------------------
-// /auto-config — 連続オートモード設定の表示・変更
+// /auto-config — Display and edit Continuous Auto Mode configuration
 // ---------------------------------------------------------------------------
 
 async function handleAutoConfig(
@@ -937,11 +937,11 @@ async function handleAutoConfig(
         setConfigStoragePath(ctx.globalStoragePath);
     }
 
-    // 現在の設定を読み込み
+    // Load current config
     const config = loadAutoModeConfig(channel.id);
     const displayText = formatConfigForDisplay(config);
 
-    // 設定変更ボタン
+    // Configuration modification buttons
     const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId('autoconfig_confirm_auto')
@@ -975,19 +975,19 @@ async function handleAutoConfig(
     const stepsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId('autoconfig_steps_3')
-            .setLabel('3ステップ')
+            .setLabel('3 steps')
             .setStyle(config.maxSteps === 3 ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId('autoconfig_steps_5')
-            .setLabel('5ステップ')
+            .setLabel('5 steps')
             .setStyle(config.maxSteps === 5 ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId('autoconfig_steps_10')
-            .setLabel('10ステップ')
+            .setLabel('10 steps')
             .setStyle(config.maxSteps === 10 ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId('autoconfig_steps_20')
-            .setLabel('20ステップ')
+            .setLabel('20 steps')
             .setStyle(config.maxSteps === 20 ? ButtonStyle.Success : ButtonStyle.Secondary),
     );
 

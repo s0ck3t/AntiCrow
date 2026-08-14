@@ -235,9 +235,9 @@ export async function handleButtonInteraction(
                 // 保存
                 saveAutoModeConfig(channel.id, updated);
 
-                // 更新された設定を表示
+                // Display updated settings
                 const displayText = formatConfigForDisplay(updated);
-                await interaction.reply({ embeds: [buildEmbed(`✅ 設定を更新しました\n\n${displayText}`, EmbedColor.Success)] });
+                await interaction.reply({ embeds: [buildEmbed(`✅ Settings updated\n\n${displayText}`, EmbedColor.Success)] });
             } catch (e) {
                 logError(`handleButtonInteraction: autoconfig failed`, e);
                 await interaction.reply({ embeds: [buildEmbed(t('slash.error', e instanceof Error ? e.message : String(e)), EmbedColor.Error)] });

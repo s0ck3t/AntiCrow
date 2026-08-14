@@ -7,7 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logDebug, logWarn, logError } from './logger';
-import { SubagentPrompt, SubagentResponse } from './subagentTypes';
+import { SubagentPrompt, SubagentResponse, SubagentReady } from './subagentTypes';
 
 // ---------------------------------------------------------------------------
 // セキュリティバリデーション（§10）
@@ -43,38 +43,38 @@ export function validateAgentName(name: string): boolean {
  * @returns 書き込んだファイルのパス
  */
 export function writePrompt(ipcDir: string, prompt: SubagentPrompt): string {
-    // バリデーション
+    // Validation
     if (!validateAgentName(prompt.to)) {
-        throw new Error(`無効なエージェント名: "${prompt.to}"`);
+        throw new Error(`Invalid agent name: "${prompt.to}"`);
     }
 
     const filename = `subagent_${prompt.to}_prompt_${prompt.timestamp}.json`;
     const filePath = path.join(ipcDir, filename);
 
     if (!validateIpcPath(filePath, ipcDir)) {
-        throw new Error(`パストラバーサル検出: "${filePath}"`);
+        throw new Error(`Path traversal detected: "${filePath}"`);
     }
 
-    // ディレクトリがなければ作成
+    // Create directory if it does not exist
     if (!fs.existsSync(ipcDir)) {
         fs.mkdirSync(ipcDir, { recursive: true });
     }
 
     fs.writeFileSync(filePath, JSON.stringify(prompt, null, 2), 'utf-8');
-    logDebug(`[subagentIpc] プロンプトを書き込みました: ${filename}`);
+    logDebug(`[subagentIpc] Wrote prompt file: ${filename}`);
     return filePath;
 }
 
 // ---------------------------------------------------------------------------
-// レスポンス書き込み（サブエージェント側）
+// Response write (subagent side)
 // ---------------------------------------------------------------------------
 
 /**
- * レスポンスファイルを書き込む。
+ * Writes response file.
  *
- * @param callbackPath レスポンスの書き込み先パス
- * @param response レスポンスデータ
- * @param ipcDir 検証用の ipcDir パス
+ * @param callbackPath Target response path
+ * @param response Response data
+ * @param ipcDir Verification ipcDir path
  */
 export function writeResponse(
     callbackPath: string,
@@ -82,11 +82,11 @@ export function writeResponse(
     ipcDir: string,
 ): void {
     if (!validateIpcPath(callbackPath, ipcDir)) {
-        throw new Error(`パストラバーサル検出 (response): "${callbackPath}"`);
+        throw new Error(`Path traversal detected (response): "${callbackPath}"`);
     }
 
     fs.writeFileSync(callbackPath, JSON.stringify(response, null, 2), 'utf-8');
-    logDebug(`[subagentIpc] レスポンスを書き込みました: ${path.basename(callbackPath)}`);
+    logDebug(`[subagentIpc] Wrote response file: ${path.basename(callbackPath)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,3 +309,245 @@ export function watchPrompts(
         logDebug('[subagentIpc] プロンプト監視を停止');
     };
 }
+
+// ---------------------------------------------------------------------------
+// 準備完了 & ハートビート通知（サブエージェント → メインエージェント）
+// ---------------------------------------------------------------------------
+
+/**
+ * サブエージェントの準備完了通知ファイルを書き込む。
+ *
+ * @param ipcDir globalStorage/ipc ディレクトリパス
+ * @param ready 準備完了データ
+ * @returns 書き込んだファイルのパス
+ */
+export function writeReady(ipcDir: string, ready: SubagentReady): string {
+    if (!validateAgentName(ready.name)) {
+        throw new Error(`Invalid agent name: "${ready.name}"`);
+    }
+
+    const filename = `subagent_${ready.name}_ready.json`;
+    const filePath = path.join(ipcDir, filename);
+
+    if (!validateIpcPath(filePath, ipcDir)) {
+        throw new Error(`Path traversal detected (ready): "${filePath}"`);
+    }
+
+    if (!fs.existsSync(ipcDir)) {
+        fs.mkdirSync(ipcDir, { recursive: true });
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(ready, null, 2), 'utf-8');
+    logDebug(`[subagentIpc] Wrote ready file: ${filename}`);
+    return filePath;
+}
+
+/**
+ * サブエージェントのハートビートファイルを更新する。
+ *
+ * @param ipcDir globalStorage/ipc ディレクトリパス
+ * @param name サブエージェント名
+ */
+export function writeHeartbeat(ipcDir: string, name: string): void {
+    if (!validateAgentName(name)) {
+        return;
+    }
+
+    const filename = `subagent_${name}_heartbeat.json`;
+    const filePath = path.join(ipcDir, filename);
+
+    if (!validateIpcPath(filePath, ipcDir)) {
+        return;
+    }
+
+    if (!fs.existsSync(ipcDir)) {
+        try {
+            fs.mkdirSync(ipcDir, { recursive: true });
+        } catch {
+            return;
+        }
+    }
+
+    try {
+        fs.writeFileSync(filePath, JSON.stringify({ name, timestamp: Date.now() }), 'utf-8');
+    } catch {
+        /* ignore heartbeat write errors */
+    }
+}
+
+/**
+ * サブエージェントの準備完了ファイル出現を監視する。
+ *
+ * @param ipcDir globalStorage/ipc ディレクトリパス
+ * @param name サブエージェント名
+ * @param timeoutMs タイムアウト（ミリ秒）
+ * @param pollIntervalMs ポーリング間隔（ミリ秒）
+ * @returns 準備完了なら true, タイムアウトなら false
+ */
+export function watchReady(
+    ipcDir: string,
+    name: string,
+    timeoutMs: number,
+    pollIntervalMs: number = 500,
+): Promise<boolean> {
+    return new Promise((resolve) => {
+        const filename = `subagent_${name}_ready.json`;
+        const readyPath = path.join(ipcDir, filename);
+
+        // Immediate check
+        if (fs.existsSync(readyPath)) {
+            logDebug(`[subagentIpc] watchReady: already ready (${filename})`);
+            resolve(true);
+            return;
+        }
+
+        let resolved = false;
+        let watcher: fs.FSWatcher | null = null;
+        let pollTimer: ReturnType<typeof setInterval> | null = null;
+        let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const cleanup = () => {
+            if (resolved) return;
+            resolved = true;
+            if (watcher) {
+                try { watcher.close(); } catch { /* ignore */ }
+                watcher = null;
+            }
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+            if (timeoutTimer) {
+                clearTimeout(timeoutTimer);
+                timeoutTimer = null;
+            }
+        };
+
+        const check = () => {
+            if (fs.existsSync(readyPath)) {
+                logDebug(`[subagentIpc] watchReady: ready detected (${filename})`);
+                cleanup();
+                resolve(true);
+            }
+        };
+
+        // fs.watch
+        try {
+            if (!fs.existsSync(ipcDir)) {
+                fs.mkdirSync(ipcDir, { recursive: true });
+            }
+            watcher = fs.watch(ipcDir, (_event, changedFile) => {
+                if (changedFile === filename) {
+                    check();
+                }
+            });
+            watcher.on('error', () => {
+                if (watcher) {
+                    try { watcher.close(); } catch { /* ignore */ }
+                    watcher = null;
+                }
+            });
+        } catch {
+            /* ignore, fallback to polling */
+        }
+
+        // Polling fallback
+        pollTimer = setInterval(() => {
+            if (resolved) return;
+            check();
+        }, pollIntervalMs);
+
+        // Timeout
+        timeoutTimer = setTimeout(() => {
+            if (resolved) return;
+            logWarn(`[subagentIpc] watchReady timed out (${timeoutMs}ms) for ${filename}`);
+            cleanup();
+            resolve(false);
+        }, timeoutMs);
+
+        // Initial check again after setup
+        check();
+    });
+}
+
+/**
+ * サブエージェントが IPC 経由で生存しているか（ハートビートまたは準備完了ファイルが最新か）確認する。
+ *
+ * @param ipcDir globalStorage/ipc ディレクトリパス
+ * @param name サブエージェント名
+ * @param maxAgeMs 最大許容経過時間（ミリ秒、デフォルト: 30000）
+ * @returns 生存していれば true
+ */
+export function isAgentAliveIpc(
+    ipcDir: string,
+    name: string,
+    maxAgeMs: number = 30_000,
+): boolean {
+    if (!validateAgentName(name)) {
+        return false;
+    }
+
+    const heartbeatPath = path.join(ipcDir, `subagent_${name}_heartbeat.json`);
+    const readyPath = path.join(ipcDir, `subagent_${name}_ready.json`);
+    const now = Date.now();
+
+    // Check heartbeat first
+    try {
+        if (fs.existsSync(heartbeatPath)) {
+            const stat = fs.statSync(heartbeatPath);
+            if (now - stat.mtimeMs < maxAgeMs) {
+                return true;
+            }
+            const data = JSON.parse(fs.readFileSync(heartbeatPath, 'utf-8'));
+            if (typeof data.timestamp === 'number' && now - data.timestamp < maxAgeMs) {
+                return true;
+            }
+        }
+    } catch {
+        /* ignore parse error */
+    }
+
+    // Fallback to ready file
+    try {
+        if (fs.existsSync(readyPath)) {
+            const stat = fs.statSync(readyPath);
+            if (now - stat.mtimeMs < maxAgeMs) {
+                return true;
+            }
+        }
+    } catch {
+        /* ignore */
+    }
+
+    return false;
+}
+
+/**
+ * サブエージェントの準備完了およびハートビートファイルを削除する。
+ *
+ * @param ipcDir globalStorage/ipc ディレクトリパス
+ * @param name サブエージェント名
+ */
+export function cleanupAgentIpc(ipcDir: string, name: string): void {
+    if (!validateAgentName(name)) {
+        return;
+    }
+
+    const readyPath = path.join(ipcDir, `subagent_${name}_ready.json`);
+    const heartbeatPath = path.join(ipcDir, `subagent_${name}_heartbeat.json`);
+
+    try {
+        if (fs.existsSync(readyPath)) {
+            fs.unlinkSync(readyPath);
+            logDebug(`[subagentIpc] Cleaned up ready file: subagent_${name}_ready.json`);
+        }
+    } catch { /* ignore */ }
+
+    try {
+        if (fs.existsSync(heartbeatPath)) {
+            fs.unlinkSync(heartbeatPath);
+            logDebug(`[subagentIpc] Cleaned up heartbeat file: subagent_${name}_heartbeat.json`);
+        }
+    } catch { /* ignore */ }
+}
+

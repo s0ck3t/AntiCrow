@@ -19,7 +19,7 @@ export async function checkAndOfferShortcut(context: vscode.ExtensionContext): P
     try {
         createDesktopShortcut(context.extensionPath);
         logDebug('shortcutInstaller: auto-created desktop shortcut on first run');
-        vscode.window.showInformationMessage('✅ デスクトップに AntiCrow ショートカットを自動作成しました。');
+        vscode.window.showInformationMessage('✅ AntiCrow desktop shortcut created automatically.');
     } catch (e) {
         logError('shortcutInstaller: failed to auto-create shortcut', e);
     }

@@ -23,27 +23,27 @@ export const SUGGEST_AUTO_ID = 'suggest_auto';
 export const SUGGEST_AUTO_MODE_ID = 'suggest_auto_mode';
 
 /** AI判断ボタン押下時に実行されるプロンプト */
-export const AUTO_PROMPT = '今の状況を見て、次にやるべきことをエージェントの判断で実行してください';
+/** Prompt executed when AI judgment button is clicked */
+export const AUTO_PROMPT = 'Evaluate the current situation and execute the next appropriate action according to agent discretion';
 
 // ---------------------------------------------------------------------------
-// 一時ストア（メモリ内）
+// Temporary store (in-memory)
 // ---------------------------------------------------------------------------
 
-/** channelId → SuggestionItem[] のマップ（ボタンクリック時に参照） */
+/** channelId → SuggestionItem[] map (referenced on button click) */
 const pendingSuggestions = new Map<string, { items: SuggestionItem[] }>();
 
 /**
- * 提案を一時保存する（ボタンクリック時に取得できるよう）。
- * channelId 単位で管理。新しい提案が来たら上書き。
+ * Temporarily stores suggestions (retrievable upon button clicks).
+ * Managed per channelId. Overwritten when new suggestions arrive.
  */
 export function storeSuggestions(channelId: string, items: SuggestionItem[]): void {
     pendingSuggestions.set(channelId, { items });
 }
 
 /**
- * channelId + index で提案を取得する。
- * 同一チャンネルで新しい提案が来ると古い提案は上書きされるため、
- * その場合は null を返す。
+ * Retrieves suggestion by channelId + index.
+ * Returns null if suggestions are overwritten by a new response.
  */
 export function getSuggestion(channelId: string, index: number): SuggestionItem | null {
     const entry = pendingSuggestions.get(channelId);
@@ -52,8 +52,8 @@ export function getSuggestion(channelId: string, index: number): SuggestionItem 
 }
 
 /**
- * channelId に保存されている全提案を取得する。
- * 「エージェントに任せる」ボタン押下時にコンテキストとして参照する。
+ * Retrieves all suggestions stored for a channelId.
+ * Referenced as context when "Let Agent Decide" button is clicked.
  */
 export function getAllSuggestions(channelId: string): SuggestionItem[] | null {
     const entry = pendingSuggestions.get(channelId);
@@ -62,16 +62,16 @@ export function getAllSuggestions(channelId: string): SuggestionItem[] | null {
 }
 
 // ---------------------------------------------------------------------------
-// Discord UI ビルダー
+// Discord UI Builder
 // ---------------------------------------------------------------------------
 
-/** 絵文字プレフィックス */
+/** Emoji prefix */
 const SUGGESTION_EMOJIS = ['💡', '🔧', '🚀'];
 
 /**
- * 提案アイテムから Discord ボタン行を生成する。
- * 提案が0個の場合は null を返す。
- * @param wsKey ワークスペースキー。指定時は customId に `{baseId}:{wsKey}` 形式で埋め込む（マルチ WS 対応）
+ * Generates Discord ActionRow button row from suggestion items.
+ * Returns null if there are no suggestions.
+ * @param wsKey Workspace key. When specified, embeds into customId as `{baseId}:{wsKey}`
  */
 export function buildSuggestionRow(
     items: SuggestionItem[],
@@ -79,7 +79,7 @@ export function buildSuggestionRow(
 ): ActionRowBuilder<ButtonBuilder> | null {
     if (items.length === 0) return null;
 
-    /** wsKey があれば `:wsKey` を付与するヘルパー */
+    /** Helper to append `:wsKey` if wsKey exists */
     const withWs = (baseId: string) => wsKey ? `${baseId}:${wsKey}` : baseId;
 
     const row = new ActionRowBuilder<ButtonBuilder>();
@@ -93,21 +93,21 @@ export function buildSuggestionRow(
         row.addComponents(button);
     }
 
-    // 「🤖 エージェントに任せる」ボタンを末尾に追加
+    // Append "🤖 Let Agent Decide" button to the end
     const autoButton = new ButtonBuilder()
         .setCustomId(withWs(SUGGEST_AUTO_ID))
-        .setLabel('エージェントに任せる')
+        .setLabel('Let Agent Decide')
         .setStyle(ButtonStyle.Secondary)
         .setEmoji('🤖');
     row.addComponents(autoButton);
 
-    // Phase 3: 「🔄 連続オートモードで実行」ボタンを追加（/suggest → /auto 連携）
-    // Discord ActionRow の上限は5ボタン。提案3 + auto + auto_mode = 5。
-    const currentButtonCount = Math.min(items.length, 3) + 1; // 提案ボタン + autoButton
+    // Phase 3: Append "🔄 Run in Continuous Auto Mode" button (/suggest → /auto)
+    // Discord ActionRow limit is 5 buttons. Suggestions (up to 3) + auto + auto_mode = 5.
+    const currentButtonCount = Math.min(items.length, 3) + 1; // suggestion buttons + autoButton
     if (currentButtonCount < 5) {
         const autoModeButton = new ButtonBuilder()
             .setCustomId(withWs(SUGGEST_AUTO_MODE_ID))
-            .setLabel('連続オートモードで実行')
+            .setLabel('Run in Continuous Auto Mode')
             .setStyle(ButtonStyle.Primary)
             .setEmoji('🔄');
         row.addComponents(autoModeButton);
@@ -117,17 +117,17 @@ export function buildSuggestionRow(
 }
 
 /**
- * 提案アイテムから description 付きのコンテンツテキストを生成する。
- * description を持つ提案がある場合、番号付きリストでボタンの上に表示する。
- * すべての提案に description がない場合はデフォルトの見出しのみ返す。
+ * Generates content text with descriptions from suggestion items.
+ * If any suggestion has a description, renders as a numbered list above buttons.
+ * Otherwise returns default heading.
  */
 export function buildSuggestionContent(items: SuggestionItem[]): string {
     const hasDescription = items.some(item => item.description);
     if (!hasDescription) {
-        return '💡 **次のアクション提案**';
+        return '💡 **Next Action Suggestions**';
     }
 
-    const lines = ['💡 **次のアクション提案**', ''];
+    const lines = ['💡 **Next Action Suggestions**', ''];
     for (let i = 0; i < items.length && i < 3; i++) {
         const emoji = SUGGESTION_EMOJIS[i] || '💡';
         const desc = items[i].description || items[i].label;

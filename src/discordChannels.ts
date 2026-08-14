@@ -26,12 +26,21 @@ export function workspaceCategoryName(workspaceName: string): string {
     return `${WORKSPACE_CATEGORY_PREFIX}${workspaceName}`;
 }
 
-/** カテゴリー名からワークスペース名を抽出する。プレフィックスが無ければ null を返す。 */
+/** カテゴリー名からワークスペース名を抽出する。 */
 export function extractWorkspaceFromCategoryName(categoryName: string): string | null {
+    if (!categoryName) { return null; }
     if (categoryName.startsWith(WORKSPACE_CATEGORY_PREFIX)) {
         return categoryName.slice(WORKSPACE_CATEGORY_PREFIX.length);
     }
-    return null;
+    const trimmed = categoryName.trim();
+    if (trimmed.startsWith('🤖')) {
+        return trimmed.replace(/^🤖\s*/, '');
+    }
+    const lower = trimmed.toLowerCase();
+    if (lower === SCHEDULES_CATEGORY_NAME.toLowerCase() || lower === 'general' || lower === 'text channels' || lower === 'voice channels') {
+        return null;
+    }
+    return trimmed;
 }
 
 /**
@@ -39,9 +48,11 @@ export function extractWorkspaceFromCategoryName(categoryName: string): string |
  * ワークスペースカテゴリー配下の場合のみ名前を返す。
  */
 export function resolveWorkspaceFromChannel(channel: TextChannel): string | null {
-    if (!channel.parent) { return null; }
-    if (channel.parent.type !== ChannelType.GuildCategory) { return null; }
-    return extractWorkspaceFromCategoryName(channel.parent.name);
+    if (!channel) { return null; }
+    if (channel.parent && channel.parent.type === ChannelType.GuildCategory) {
+        return extractWorkspaceFromCategoryName(channel.parent.name);
+    }
+    return null;
 }
 
 // -----------------------------------------------------------------------
@@ -80,6 +91,9 @@ export async function ensureSchedulesCategory(client: Client, guildId: string): 
 
 /** ワークスペース用カテゴリーを取得 or 作成する。 */
 export async function ensureWorkspaceCategory(client: Client, guildId: string, wsName: string): Promise<string | null> {
+    if (!wsName || wsName === 'Untitled (Workspace)' || wsName.toLowerCase().startsWith('untitled')) {
+        return null;
+    }
     const guild = client.guilds.cache.get(guildId);
     if (!guild) {
         logWarn(`Discord: guild ${guildId} not found`);

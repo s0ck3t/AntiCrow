@@ -54,7 +54,7 @@ export function getNextRunDisplay(cron: string, timezone: string = getTimezone()
             return next.toFormat('HH:mm');
         }
 
-        return '次回実行は cron 式に従います';
+        return 'Follows cron schedule';
     } catch {
         return '—';
     }
@@ -70,35 +70,35 @@ export function cronToHuman(cron: string): string {
 
     const [minute, hour, dayOfMonth, , dayOfWeek] = parts;
 
-    // */N 分
+    // */N min
     const everyMatch = minute.match(/^\*\/(\d+)$/);
     if (everyMatch && hour === '*') {
-        return `${everyMatch[1]}分毎`;
+        return `Every ${everyMatch[1]} min`;
     }
 
-    // 毎分
-    if (minute === '*' && hour === '*') { return '毎分'; }
+    // Every minute
+    if (minute === '*' && hour === '*') { return 'Every minute'; }
 
-    // 毎時
+    // Every hour
     if (minute !== '*' && hour === '*') {
-        return `毎時 ${minute}分`;
+        return `Hourly at :${minute.padStart(2, '0')}`;
     }
 
-    // 毎日
+    // Daily
     if (minute !== '*' && hour !== '*' && dayOfMonth === '*' && dayOfWeek === '*') {
-        return `毎日 ${hour}:${minute.padStart(2, '0')}`;
+        return `Daily at ${hour}:${minute.padStart(2, '0')}`;
     }
 
-    // 週次
+    // Weekly
     if (dayOfWeek !== '*') {
-        const days = ['日', '月', '火', '水', '木', '金', '土'];
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const dayName = days[parseInt(dayOfWeek)] || dayOfWeek;
-        return `毎週${dayName} ${hour}:${minute.padStart(2, '0')}`;
+        return `Every ${dayName} at ${hour}:${minute.padStart(2, '0')}`;
     }
 
-    // 月次
+    // Monthly
     if (dayOfMonth !== '*') {
-        return `毎月${dayOfMonth}日 ${hour}:${minute.padStart(2, '0')}`;
+        return `Monthly on day ${dayOfMonth} at ${hour}:${minute.padStart(2, '0')}`;
     }
 
     return cron;
@@ -241,9 +241,9 @@ export function naturalTextToCron(text: string): string | null {
 function statusBadge(status: string, wsName?: string, runningWsNames?: Set<string>): string {
     if (status === 'active') {
         if (runningWsNames && wsName && !runningWsNames.has(wsName)) {
-            return '🟡'; // 接続待機中
+            return '🟡'; // Waiting for connection
         }
-        return '🟢'; // 稼働中
+        return '🟢'; // Running
     }
     if (status === 'paused') return '🔴';
     if (status === 'pending_confirmation') return '⏳';
@@ -263,89 +263,89 @@ export function buildScheduleListEmbed(
     const scheduledPlans = plans.filter(p => p.cron);
 
     const guideText = [
-        '\n📖 **変数ガイド**',
-        '**組み込み変数:** `{{date}}` `{{time}}` `{{datetime}}` `{{year}}` `{{month}}` `{{day}}`',
-        '**環境変数:** `{{env:VARIABLE_NAME}}` — OS環境変数を展開',
-        '> ⚠️ カスタム引数（`{{xxx}}`）は定期実行ではモーダル入力不可のため使用できません',
+        '\n📖 **Variables Guide**',
+        '**Built-in variables:** `{{date}}` `{{time}}` `{{datetime}}` `{{year}}` `{{month}}` `{{day}}`',
+        '**Environment variables:** `{{env:VARIABLE_NAME}}` — Expands OS environment variables',
+        '> ⚠️ Custom arguments (`{{xxx}}`) cannot be used in scheduled tasks because modal input is unavailable',
     ].join('\n');
 
     const newButton = new ButtonBuilder()
         .setCustomId('sched_new')
-        .setLabel('➕ 新規作成')
+        .setLabel('➕ New Schedule')
         .setStyle(ButtonStyle.Success);
 
     const embed = new EmbedBuilder()
-        .setTitle('📅 スケジュール管理')
+        .setTitle('📅 Schedule Management')
         .setColor(0x5865F2)
         .setTimestamp();
 
     if (scheduledPlans.length === 0) {
-        embed.setDescription('登録されたスケジュールはありません。\n「➕ 新規作成」ボタンからスケジュールを追加できます。' + guideText);
+        embed.setDescription('No scheduled tasks registered.\nYou can add a schedule using the "➕ New Schedule" button.' + guideText);
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(newButton);
         return { embeds: [embed], components: [row] };
     }
 
-    // ワークスペース別にグループ化
+    // Group by workspace
     const grouped = new Map<string, Plan[]>();
     for (const plan of scheduledPlans) {
-        const wsKey = plan.workspace_name || '未割り当て';
+        const wsKey = plan.workspace_name || 'Unassigned';
         if (!grouped.has(wsKey)) { grouped.set(wsKey, []); }
         grouped.get(wsKey)!.push(plan);
     }
 
     const wsCount = grouped.size;
-    embed.setDescription(`${scheduledPlans.length}件のスケジュール（${wsCount} ワークスペース）` + guideText);
+    embed.setDescription(`${scheduledPlans.length} schedule(s) (${wsCount} workspace(s))` + guideText);
 
     const components: ActionRowBuilder<ButtonBuilder>[] = [];
     let fieldCount = 0;
 
     for (const [wsName, wsPlans] of grouped) {
-        // ワークスペースセクションヘッダー
+        // Workspace section header
         if (fieldCount < 25) {
             embed.addFields({
                 name: `📁 ${wsName}`,
-                value: `${wsPlans.length}件のスケジュール`,
+                value: `${wsPlans.length} schedule(s)`,
             });
             fieldCount++;
         }
 
         for (const plan of wsPlans.slice(0, 10)) {
-            if (fieldCount >= 25) { break; } // Discord Embed 上限
+            if (fieldCount >= 25) { break; } // Discord Embed limit
 
             const badge = statusBadge(plan.status, plan.workspace_name, runningWsNames);
             const humanCron = cronToHuman(plan.cron!);
             const nextRun = plan.status === 'active'
                 ? getNextRunDisplay(plan.cron!, timezone)
-                : '(停止中)';
+                : '(Paused)';
             const summary = plan.human_summary || plan.prompt.substring(0, 60);
             const execCount = plan.execution_count || 0;
             const lastExec = plan.last_executed_at
                 ? DateTime.fromISO(plan.last_executed_at).setZone(timezone).toFormat('MM/dd HH:mm')
-                : 'なし';
+                : 'None';
 
             embed.addFields({
                 name: `${badge} ${summary}`,
                 value: [
                     `📁 ${wsName}`,
                     `⏰ \`${plan.cron}\` (${humanCron})`,
-                    `▶️ 次回: ${nextRun} | 実行回数: ${execCount} | 最終: ${lastExec}`,
+                    `▶️ Next: ${nextRun} | Runs: ${execCount} | Last: ${lastExec}`,
                     `🆔 \`${plan.plan_id.substring(0, 8)}...\``,
                 ].join('\n'),
             });
             fieldCount++;
 
-            const toggleLabel = plan.status === 'active' ? '⏸️ 一時停止' : '▶️ 再開';
+            const toggleLabel = plan.status === 'active' ? '⏸️ Pause' : '▶️ Resume';
             const toggleStyle = plan.status === 'active' ? ButtonStyle.Secondary : ButtonStyle.Success;
 
-            if (components.length < 5) { // ActionRow 上限 5
+            if (components.length < 5) { // ActionRow limit 5
                 const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
                     new ButtonBuilder()
                         .setCustomId(`sched_run_${plan.plan_id}`)
-                        .setLabel('▶️ 即時実行')
+                        .setLabel('▶️ Run Now')
                         .setStyle(ButtonStyle.Primary),
                     new ButtonBuilder()
                         .setCustomId(`sched_edit_${plan.plan_id}`)
-                        .setLabel('✏️ 編集')
+                        .setLabel('✏️ Edit')
                         .setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder()
                         .setCustomId(`sched_toggle_${plan.plan_id}`)
@@ -353,7 +353,7 @@ export function buildScheduleListEmbed(
                         .setStyle(toggleStyle),
                     new ButtonBuilder()
                         .setCustomId(`sched_delete_${plan.plan_id}`)
-                        .setLabel('🗑️ 削除')
+                        .setLabel('🗑️ Delete')
                         .setStyle(ButtonStyle.Danger),
                 );
                 components.push(row);
@@ -361,17 +361,16 @@ export function buildScheduleListEmbed(
         }
     }
 
-    // 操作ボタン行: 新規作成 + リフレッシュ
+    // Action row: New + Refresh
     const refreshButton = new ButtonBuilder()
         .setCustomId('sched_list')
-        .setLabel('🔄 更新')
+        .setLabel('🔄 Refresh')
         .setStyle(ButtonStyle.Primary);
 
     if (components.length < 5) {
         const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(newButton, refreshButton);
         components.push(actionRow);
     } else if (components.length > 0) {
-        // 最後の ActionRow にボタンを追加（1行あたり最大5ボタン）
         const lastRow = components[components.length - 1];
         if (lastRow.components.length < 4) {
             lastRow.addComponents(newButton, refreshButton);
@@ -391,25 +390,25 @@ export function buildDeleteConfirmEmbed(
     plan: Plan,
 ): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
     const embed = new EmbedBuilder()
-        .setTitle('⚠️ 削除の確認')
+        .setTitle('⚠️ Confirm Deletion')
         .setDescription([
             `**${plan.human_summary || plan.prompt.substring(0, 60)}**`,
             '',
             `cron: \`${plan.cron}\``,
             `ID: \`${plan.plan_id}\``,
             '',
-            'この操作は取り消せません。本当に削除しますか？',
+            'This action cannot be undone. Are you sure you want to delete this schedule?',
         ].join('\n'))
         .setColor(0xED4245);
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId(`sched_confirm_delete_${plan.plan_id}`)
-            .setLabel('✅ 削除する')
+            .setLabel('✅ Delete')
             .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
             .setCustomId('sched_cancel_delete')
-            .setLabel('❌ キャンセル')
+            .setLabel('❌ Cancel')
             .setStyle(ButtonStyle.Secondary),
     );
 

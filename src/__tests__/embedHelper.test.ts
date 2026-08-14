@@ -148,42 +148,42 @@ describe('embedHelper', () => {
 
         it('should sanitize Windows file paths', () => {
             const result = sanitizeErrorForDiscord('Error at C:\\Users\\user\\file.ts');
-            expect(result).toContain('内部エラー');
+            expect(result).toContain('internal error');
         });
 
         it('should sanitize Unix file paths', () => {
             const result = sanitizeErrorForDiscord('Error at /home/user/project/file.ts');
-            expect(result).toContain('内部エラー');
+            expect(result).toContain('internal error');
         });
 
         it('should sanitize port numbers', () => {
             const result = sanitizeErrorForDiscord('Connection failed on :9222');
-            expect(result).toContain('内部エラー');
+            expect(result).toContain('internal error');
         });
 
         it('should sanitize WebSocket URLs', () => {
             const result = sanitizeErrorForDiscord('ws://localhost:9222/devtools');
-            expect(result).toContain('内部エラー');
+            expect(result).toContain('internal error');
         });
 
         it('should sanitize localhost URLs', () => {
             const result = sanitizeErrorForDiscord('http://localhost:3000/api');
-            expect(result).toContain('内部エラー');
+            expect(result).toContain('internal error');
         });
 
         it('should sanitize 127.0.0.1 URLs', () => {
             const result = sanitizeErrorForDiscord('http://127.0.0.1:8080/debug');
-            expect(result).toContain('内部エラー');
+            expect(result).toContain('internal error');
         });
 
         it('should sanitize CDP mentions', () => {
             const result = sanitizeErrorForDiscord('CDP connection failed');
-            expect(result).toContain('内部エラー');
+            expect(result).toContain('internal error');
         });
 
         it('should sanitize Chrome DevTools Protocol mentions', () => {
             const result = sanitizeErrorForDiscord('Chrome DevTools Protocol error');
-            expect(result).toContain('内部エラー');
+            expect(result).toContain('internal error');
         });
 
         it('should handle empty string', () => {

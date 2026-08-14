@@ -243,24 +243,27 @@ export class CdpBridge {
     }
 
     private async doLaunchAntigravity(folderPath?: string): Promise<void> {
-        // VS Code Terminal API 経由で起動
-        // Extension Host から直接 spawn/exec した子プロセスは GUI ウィンドウを作成できないため、
-        // Terminal (pty) コンテキストで antigravity CLI を実行する
-        // ※ 以前は anticrow.ps1 スクリプトを使っていたが、スクリプトが存在しなかったため
-        //    antigravity CLI の直接呼び出しに変更
-
         logDebug(`CDP: launchAntigravity called, folderPath="${folderPath || '(none)'}"`);
 
-        // コマンド組み立て: antigravity "folderPath" --new-window
+        if (folderPath) {
+            try {
+                const uri = vscode.Uri.file(folderPath);
+                await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+                logDebug(`CDP: launchAntigravity native vscode.openFolder succeeded for "${folderPath}"`);
+                return;
+            } catch (e) {
+                logWarn(`CDP: vscode.openFolder failed, falling back to CLI launch: ${e}`);
+            }
+        }
+
+        // コマンド組み立て: antigravity "folderPath" --new-window --remote-debugging-port=9000
         const args: string[] = ['antigravity'];
         if (folderPath) {
             args.push(`"${folderPath}"`);
         }
         args.push('--new-window');
-
-        // NOTE: --remote-debugging-port は渡さない。
-        // Antigravity は単一 CDP ポートで全ウィンドウを管理するため、
-        // 明示的に指定すると既存ポートと競合する可能性がある。
+        const cdpPort = this.ports[0] || 9000;
+        args.push(`--remote-debugging-port=${cdpPort}`);
 
         // OS 別のシェル設定
         let shellPath: string;
@@ -535,8 +538,8 @@ export class CdpBridge {
     // チャット操作
     // -----------------------------------------------------------------------
 
-    async startNewChat(): Promise<void> {
-        return doStartNewChat(this.promptSenderContext);
+    async startNewChat(workspaceName?: string): Promise<void> {
+        return doStartNewChat(this.promptSenderContext, workspaceName);
     }
 
     /**
@@ -898,8 +901,8 @@ export class CdpBridge {
     }
 
 
-    async sendPrompt(prompt: string): Promise<void> {
-        return doSendPrompt(this.promptSenderContext, prompt);
+    async sendPrompt(prompt: string, workspaceName?: string): Promise<void> {
+        return doSendPrompt(this.promptSenderContext, prompt, workspaceName);
     }
 
     // -----------------------------------------------------------------------

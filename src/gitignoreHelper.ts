@@ -10,7 +10,7 @@ import * as path from 'path';
 import { logDebug, logWarn } from './logger';
 
 const GITIGNORE_ENTRY = '.anticrow/';
-const GITIGNORE_COMMENT = '# AntiCrow ローカルデータ';
+const GITIGNORE_COMMENT = '# AntiCrow local data';
 
 /**
  * 指定されたリポジトリルートの .gitignore に `.anticrow/` エントリを追加する。

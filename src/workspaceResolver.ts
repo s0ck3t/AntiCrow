@@ -10,7 +10,7 @@ import { CdpBridge } from './cdpBridge';
 import { FileIpc } from './fileIpc';
 import { AntigravityLaunchError } from './errors';
 import { getCdpPorts, getWorkspacePaths } from './configHelper';
-import { logDebug, logWarn } from './logger';
+import { logDebug, logInfo, logWarn } from './logger';
 import { buildEmbed, EmbedColor } from './embedHelper';
 import { t } from './i18n';
 
@@ -97,9 +97,17 @@ export async function resolveWorkspace(
                         const freshPorts = getCdpPorts(fileIpc.getStoragePath());
                         instances = await CdpBridge.discoverInstances(freshPorts);
                         target = instances.find(i => CdpBridge.extractWorkspaceName(i.title) === wsName);
+                        if (!target) {
+                            const lower = wsName.toLowerCase();
+                            target = instances.find(i => CdpBridge.extractWorkspaceName(i.title).toLowerCase() === lower);
+                        }
                         pollCount++;
                         if (target) { break; }
                         logDebug(`workspaceResolver: polling for workspace "${wsName}"... (${pollCount})`);
+                    }
+                    if (!target && instances.length > 0) {
+                        target = instances[0];
+                        logInfo(`workspaceResolver: title match for "${wsName}" not found after polling, falling back to active instance: "${target.title}" (id=${target.id})`);
                     }
                     if (target) {
                         autoLaunched = true;
@@ -155,7 +163,7 @@ export async function resolveWorkspace(
         // 重要: 元の CdpBridge を返さない！返すとメインウィンドウ（別WS）に送信されてしまう
         try {
             await channel.send({ embeds: [buildEmbed(
-                `⚠️ ワークスペース「${wsName}」への切替に失敗しました: ${e instanceof Error ? e.message : e}`,
+                `⚠️ Failed to switch to workspace "${wsName}": ${e instanceof Error ? e.message : e}`,
                 EmbedColor.Warning,
             )] });
         } catch { /* ignore */ }

@@ -15,7 +15,7 @@ import {
     SubagentInfo,
     DEFAULT_SUBAGENT_CONFIG,
 } from './subagentTypes';
-import { writePrompt, watchResponse } from './subagentIpc';
+import { writePrompt, watchResponse, watchReady, isAgentAliveIpc, cleanupAgentIpc } from './subagentIpc';
 import { CdpBridge } from './cdpBridge';
 import { DiscoveredInstance, discoverInstances, extractWorkspaceName } from './cdpTargets';
 
@@ -39,6 +39,8 @@ export class SubagentHandle {
     private repoRoot: string;
     /** ウィンドウ起動用のパス（ダミーフォルダ） */
     private _launchPath: string;
+    /** マルチルートワークスペース設定ファイルのパス */
+    private _workspaceFilePath: string;
     /** repoRoot の公開 getter */
     public getRepoRoot(): string { return this.repoRoot; }
 
@@ -54,6 +56,7 @@ export class SubagentHandle {
         this.worktreePath = repoRoot;
         // ウィンドウ起動用のダミーフォルダ（同一フォルダ二重オープン不可の回避）
         this._launchPath = path.join(repoRoot, '.anticrow', 'subwindows', name);
+        this._workspaceFilePath = path.join(this._launchPath, `${name}.code-workspace`);
         this.createdAt = Date.now();
         this.config = { ...DEFAULT_SUBAGENT_CONFIG, ...config };
         this.ipcDir = ipcDir;
@@ -96,14 +99,17 @@ export class SubagentHandle {
 
     /**
      * サブエージェントを起動する。
-     * 1. ダミーフォルダ作成
+     * 1. ダミーフォルダ作成 & .code-workspace 生成
      * 2. Antigravity ウィンドウを新規起動
-     * 3. CDP でターゲット出現を待つ
+     * 3. IPC 準備完了シグナル (または CDP) で出現を待つ
      */
     async spawn(): Promise<void> {
         if (this._state !== 'IDLE') {
             throw new Error(`spawn() は IDLE 状態でのみ呼び出し可能（現在: ${this._state}）`);
         }
+
+        // 起動前に古い IPC 準備完了・ハートビートファイルをクリーンアップ
+        cleanupAgentIpc(this.ipcDir, this.name);
 
         // --- CREATING: ダミーフォルダ作成 ---
         this._state = 'CREATING';
@@ -120,26 +126,48 @@ export class SubagentHandle {
             const agentNum = agentNumMatch ? agentNumMatch[1] : undefined;
 
             fs.writeFileSync(agentsPath, [
-                '# サブエージェント作業指示',
+                '# Subagent Working Instructions',
                 '',
                 ...(agentNum ? [
-                    '## あなたの識別情報',
+                    '## Your Identification',
                     '',
-                    `あなたは**サブエージェント ${agentNum}** です。チーム内で並列に作業しています。`,
+                    `You are **Subagent ${agentNum}**. You are working in parallel within a team.`,
                     '',
                 ] : []),
-                '## 作業対象リポジトリ',
+                '## Target Repository',
                 '',
-                `すべてのファイル操作は \`${this.repoRoot}\` の絶対パスで行ってください。`,
+                `All file operations must use absolute paths under \`${this.repoRoot}\`.`,
                 '',
-                '## 禁止事項',
+                '## Prohibited Actions',
                 '',
-                `- このフォルダ（\`${this._launchPath}\`）内のファイルを編集・作成しないでください`,
-                '- 相対パスでのファイル操作は禁止です',
+                `- Do not edit or create files within this launch folder (\`${this._launchPath}\`)`,
+                '- Relative path file operations are strictly prohibited',
             ].join('\n'), 'utf-8');
-            logDebug(`[SubagentHandle] ${this.name}: ダミーフォルダ作成完了: ${this._launchPath}`);
+
+            // マルチルートワークスペース設定ファイルを生成（リポジトリの全ファイルをエクスプローラーに表示）
+            try {
+                const relRepoPath = path.relative(this._launchPath, this.repoRoot).replace(/\\/g, '/');
+                const wsConfig = {
+                    folders: [
+                        {
+                            name: path.basename(this.repoRoot) || 'Repository',
+                            path: relRepoPath,
+                        },
+                        {
+                            name: `Subagent (${this.name})`,
+                            path: '.',
+                        },
+                    ],
+                    settings: {},
+                };
+                fs.writeFileSync(this._workspaceFilePath, JSON.stringify(wsConfig, null, 2), 'utf-8');
+            } catch (wsErr) {
+                logWarn(`[SubagentHandle] ${this.name}: .code-workspace 生成失敗（通常フォルダ起動にフォールバック）: ${wsErr}`);
+            }
+
+            logDebug(`[SubagentHandle] ${this.name}: Dummy folder created: ${this._launchPath}`);
         } catch (err) {
-            logError(`[SubagentHandle] ${this.name}: ダミーフォルダ作成失敗: ${err}`);
+            logError(`[SubagentHandle] ${this.name}: Failed to create dummy folder: ${err}`);
             this._state = 'FAILED';
             throw err;
         }
@@ -150,15 +178,17 @@ export class SubagentHandle {
 
         const maxRetries = this.config.spawnMaxRetries;
         let launched = false;
+        const targetLaunchPath = fs.existsSync(this._workspaceFilePath) ? this._workspaceFilePath : this._launchPath;
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                await this.cdpBridge.launchAntigravity(this._launchPath, { skipCooldown: true });
+                await this.cdpBridge.launchAntigravity(targetLaunchPath, { skipCooldown: true });
             } catch (err) {
                 logError(`[SubagentHandle] ウィンドウ起動失敗 (attempt ${attempt}/${maxRetries}): ${err}`);
                 if (attempt === maxRetries) {
                     this._state = 'FAILED';
                     await this.cleanupDummyFolder();
+                    cleanupAgentIpc(this.ipcDir, this.name);
                     throw err;
                 }
                 // リトライ前に少し待つ
@@ -182,34 +212,35 @@ export class SubagentHandle {
         }
 
         if (!launched) {
-            logError(`[SubagentHandle] READY タイムアウト: ${this.name} (全 ${maxRetries} 回のリトライ失敗)`);
+            logError(`[SubagentHandle] READY timeout: ${this.name} (All ${maxRetries} retry attempts failed)`);
             this._state = 'FAILED';
             await this.cleanupDummyFolder();
-            throw new Error(`サブエージェント "${this.name}" の起動が ${maxRetries} 回のリトライ後もタイムアウトしました`);
+            cleanupAgentIpc(this.ipcDir, this.name);
+            throw new Error(`Subagent "${this.name}" timed out after ${maxRetries} retry attempts`);
         }
 
         this._state = 'READY';
         logDebug(`[SubagentHandle] ${this.name}: READY`);
 
-        // ウィンドウを最小化（ベストエフォート）
+        // Minimise window (best effort)
         try {
             const minimized = await this.cdpBridge.minimizeWindow(this.name);
             if (minimized) {
-                logDebug(`[SubagentHandle] ${this.name}: ウィンドウを最小化しました`);
+                logDebug(`[SubagentHandle] ${this.name}: Window minimised`);
             } else {
-                logWarn(`[SubagentHandle] ${this.name}: ウィンドウの最小化に失敗（ベストエフォート）`);
+                logWarn(`[SubagentHandle] ${this.name}: Window minimisation failed (best effort)`);
             }
         } catch (err) {
-            logWarn(`[SubagentHandle] ${this.name}: ウィンドウ最小化中にエラー: ${err}`);
+            logWarn(`[SubagentHandle] ${this.name}: Error during window minimisation: ${err}`);
         }
     }
 
     /**
-     * サブエージェントにプロンプトを送信し、応答を待つ。
+     * Sends prompt to subagent and awaits response.
      */
     async sendPrompt(prompt: string, teamRequestId?: string): Promise<SubagentResponse> {
         if (this._state !== 'READY') {
-            throw new Error(`sendPrompt() は READY 状態でのみ呼び出し可能（現在: ${this._state}）`);
+            throw new Error(`sendPrompt() can only be called in READY state (current: ${this._state})`);
         }
 
         this._state = 'BUSY';
@@ -256,7 +287,7 @@ export class SubagentHandle {
             return response;
         }
 
-        // タイムアウト
+        // Timeout
         this._state = 'COMPLETED';
         this.currentTask = undefined;
         const timeoutResponse: SubagentResponse = {
@@ -266,9 +297,9 @@ export class SubagentHandle {
             status: 'timeout',
             result: '',
             execution_time_ms: this.config.promptTimeoutMs,
-            error: `タイムアウト (${this.config.promptTimeoutMs}ms)`,
+            error: `Timeout (${this.config.promptTimeoutMs}ms)`,
         };
-        logWarn(`[SubagentHandle] ${this.name}: タイムアウト`);
+        logWarn(`[SubagentHandle] ${this.name}: Timeout`);
         return timeoutResponse;
     }
 
@@ -287,7 +318,7 @@ export class SubagentHandle {
      */
     async sendPromptFireAndForget(prompt: string, teamRequestId?: string): Promise<{ promptFile: string; callbackPath: string }> {
         if (this._state !== 'READY') {
-            throw new Error(`sendPromptFireAndForget() は READY 状態でのみ呼び出し可能（現在: ${this._state}）`);
+            throw new Error(`sendPromptFireAndForget() can only be called in READY state (current: ${this._state})`);
         }
 
         this._state = 'BUSY';
@@ -332,6 +363,9 @@ export class SubagentHandle {
         this._state = 'CLOSING';
         logDebug(`[SubagentHandle] ${this.name}: CLOSING`);
 
+        // IPC 準備完了/ハートビートファイルをクリーンアップ
+        cleanupAgentIpc(this.ipcDir, this.name);
+
         // ウィンドウを閉じる
         try {
             await this.cdpBridge.closeWindow(this.name);
@@ -351,44 +385,43 @@ export class SubagentHandle {
     // -----------------------------------------------------------------------
 
     /**
-     * CDP でターゲットの出現を待つ。
-     * worktree フォルダ名 or サブエージェント名でマッチングする。
+     * サブエージェントの準備完了を待つ。
+     * 1. 高速かつ確実な IPC 準備完了シグナル (watchReady) を第一優先で使用。
+     * 2. フォールバックとして CDP ターゲット一覧のタイトルマッチングを試行。
      */
     private async waitForReady(): Promise<boolean> {
         const start = Date.now();
-        const ports = this.cdpBridge.getPorts();
-        const launchPathBase = path.basename(this._launchPath);
-        let pollCount = 0;
+        logDebug(`[SubagentHandle] waitForReady: name=${this.name}, IPC ディレクトリ監視中...`);
 
-        logDebug(`[SubagentHandle] waitForReady: name=${this.name}, launchPathBase=${launchPathBase}, launchPath=${this._launchPath}, ports=[${ports}], timeout=${this.config.launchTimeoutMs}ms`);
+        // 1. IPC 準備完了ハンドシェイク（推奨・最優先）
+        const readyViaIpc = await watchReady(
+            this.ipcDir,
+            this.name,
+            this.config.launchTimeoutMs,
+            this.config.pollIntervalMs,
+        );
 
-        while (Date.now() - start < this.config.launchTimeoutMs) {
-            pollCount++;
-            try {
-                const instances = await discoverInstances(ports);
-                const elapsed = Date.now() - start;
-                // 毎回ログ出力（デバッグ中）
-                const names = instances.map(i => {
-                    const ws = extractWorkspaceName(i.title);
-                    return `{ws="${ws}", title="${i.title.substring(0, 80)}", port=${i.port}}`;
-                }).join(', ');
-                logDebug(`[SubagentHandle] waitForReady poll#${pollCount} (${elapsed}ms): found ${instances.length} instances: [${names}]`);
-
-                const found = instances.find(
-                    (i) => this.matchesSubagent(i),
-                );
-                if (found) {
-                    logDebug(`[SubagentHandle] waitForReady: ✅ MATCHED target "${found.title}" (port=${found.port}) after ${pollCount} polls (${elapsed}ms)`);
-                    return true;
-                } else {
-                    logDebug(`[SubagentHandle] waitForReady: ❌ no match in poll#${pollCount}`);
-                }
-            } catch (err) {
-                logDebug(`[SubagentHandle] waitForReady poll#${pollCount}: network error: ${err}`);
-            }
-            await new Promise((r) => setTimeout(r, 1000));
+        if (readyViaIpc) {
+            const elapsed = Date.now() - start;
+            logDebug(`[SubagentHandle] waitForReady: ✅ IPC ハンドシェイク成功 (${elapsed}ms) for "${this.name}"`);
+            return true;
         }
-        logWarn(`[SubagentHandle] waitForReady: timed out after ${this.config.launchTimeoutMs}ms (${pollCount} polls) for "${this.name}"`);
+
+        // 2. CDP フォールバック
+        logWarn(`[SubagentHandle] waitForReady: IPC タイムアウト、CDP フォールバック試行: "${this.name}"`);
+        try {
+            const ports = this.cdpBridge.getPorts();
+            const instances = await discoverInstances(ports);
+            const found = instances.find((i) => this.matchesSubagent(i));
+            if (found) {
+                logDebug(`[SubagentHandle] waitForReady: ✅ CDP フォールバック成功 "${found.title}"`);
+                return true;
+            }
+        } catch (err) {
+            logDebug(`[SubagentHandle] waitForReady: CDP フォールバックエラー: ${err}`);
+        }
+
+        logWarn(`[SubagentHandle] waitForReady: タイムアウト (${this.config.launchTimeoutMs}ms) for "${this.name}"`);
         return false;
     }
 
@@ -414,13 +447,10 @@ export class SubagentHandle {
     async resetForReuse(): Promise<void> {
         const validStates: SubagentState[] = ['COMPLETED', 'BUSY', 'READY'];
         if (!validStates.includes(this._state)) {
-            throw new Error(`resetForReuse() は COMPLETED/BUSY/READY 状態でのみ呼び出し可能（現在: ${this._state}）`);
+            throw new Error(`resetForReuse() can only be called in COMPLETED/BUSY/READY states (current: ${this._state})`);
         }
 
         logDebug(`[SubagentHandle] ${this.name}: resetForReuse (from ${this._state})`);
-
-        // コンテキストリセットはスキップ（ユーザーフィードバック: 不要）
-        // 新しいプロンプトを送ればサブエージェントは新しいタスクとして処理する
 
         this._state = 'READY';
         this.currentTask = undefined;
@@ -429,8 +459,16 @@ export class SubagentHandle {
 
     /**
      * サブエージェントのウィンドウがまだ存在するか確認する。
+     * 1. IPC ハートビート/準備完了ファイルの鮮度を優先確認。
+     * 2. CDP インスタンス一覧でフォールバック確認。
      */
     async isAlive(): Promise<boolean> {
+        // 1. IPC ハートビート確認（30秒以内の更新があれば生存）
+        if (isAgentAliveIpc(this.ipcDir, this.name, 30_000)) {
+            return true;
+        }
+
+        // 2. CDP フォールバック確認
         try {
             const ports = this.cdpBridge.getPorts();
             const instances = await discoverInstances(ports);
@@ -493,6 +531,13 @@ export class SubagentHandle {
                 if (entry.isDirectory()) {
                     const folderPath = path.join(subwindowsDir, entry.name);
                     try {
+                        const stats = fs.statSync(folderPath);
+                        const ageMs = Date.now() - stats.mtimeMs;
+                        // 2分以内に作成/更新されたフォルダは稼働中または起動中の可能性があるためスキップ
+                        if (ageMs < 120_000) {
+                            logDebug(`[SubagentHandle] cleanupOrphanDummyFolders: skipping recent dummy folder (${Math.round(ageMs / 1000)}s old): ${folderPath}`);
+                            continue;
+                        }
                         fs.rmSync(folderPath, { recursive: true, force: true });
                         cleaned++;
                         logDebug(`[SubagentHandle] cleanupOrphanDummyFolders: 削除完了: ${folderPath}`);

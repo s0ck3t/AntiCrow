@@ -29,6 +29,9 @@ tsc_errors.txt
 tsc_output*.txt
 typecheck_output*.txt
 vsce-output.txt
+*_audit_result.txt
+npm_audit_result.txt
+scripts/*.js
 scripts/vscode_commands_dump.json
 
 # Cloudflare

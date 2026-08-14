@@ -69,12 +69,12 @@ export class SubagentManager {
         // spawn 前に stale エージェントをクリーンアップ
         await this.cleanupStaleAgents();
 
-        // 同時実行数チェック
+        // Concurrent execution limit check
         const activeCount = this.getActiveCount();
         if (activeCount >= this.config.maxConcurrent) {
             throw new Error(
-                `最大同時実行数 (${this.config.maxConcurrent}) に達しています。` +
-                `現在 ${activeCount} 個のサブエージェントが稼働中。`
+                `Maximum concurrent limit (${this.config.maxConcurrent}) reached. ` +
+                `Currently ${activeCount} subagent(s) active.`
             );
         }
 

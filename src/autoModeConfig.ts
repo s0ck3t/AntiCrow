@@ -203,25 +203,25 @@ export function parseAutoModeArgs(argsString: string): {
  */
 export function formatConfigForDisplay(config: AutoModeConfig): string {
     const selectionLabels: Record<AutoModeConfig['selectionMode'], string> = {
-        'auto-delegate': '🤖 AI判断 (auto-delegate)',
-        'first': '1️⃣ 最初の提案を選択 (first)',
-        'ai-select': '🧠 AIに選択させる (ai-select)',
+        'auto-delegate': '🤖 AI Decision (auto-delegate)',
+        'first': '1️⃣ First Suggestion (first)',
+        'ai-select': '🧠 AI Evaluates & Selects (ai-select)',
     };
 
     const confirmLabels: Record<AutoModeConfig['confirmMode'], string> = {
-        'auto': '⚡ 自動実行 (auto)',
-        'semi': '🔄 偶数ステップで確認 (semi)',
-        'manual': '✋ 毎ステップ確認 (manual)',
+        'auto': '⚡ Automatic (auto)',
+        'semi': '🔄 Confirm on Even Steps (semi)',
+        'manual': '✋ Confirm Every Step (manual)',
     };
 
     return [
-        `⚙️ **連続オートモード設定**`,
+        `⚙️ **Continuous Auto Mode Settings**`,
         `━━━━━━━━━━━━━━━━━━━━`,
         ``,
-        `📊 **最大ステップ数:** ${config.maxSteps}`,
-        `⏱️ **最大実行時間:** ${Math.round(config.maxDuration / 60000)}分`,
-        `🎯 **選択方式:** ${selectionLabels[config.selectionMode]}`,
-        `✅ **確認モード:** ${confirmLabels[config.confirmMode]}`,
+        `📊 **Max Steps:** ${config.maxSteps}`,
+        `⏱️ **Max Duration:** ${Math.round(config.maxDuration / 60000)} min`,
+        `🎯 **Selection Method:** ${selectionLabels[config.selectionMode]}`,
+        `✅ **Confirmation Mode:** ${confirmLabels[config.confirmMode]}`,
     ].join('\n');
 }
 

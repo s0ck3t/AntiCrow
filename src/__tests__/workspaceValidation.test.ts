@@ -195,8 +195,13 @@ describe('isInvalidWorkspaceName', () => {
             expect(isInvalidWorkspaceName('問題パネル')).toBe(true);
         });
 
-        it('"problem" 含む → true', () => {
-            expect(isInvalidWorkspaceName('problem panel')).toBe(true);
+        it('サブエージェント名 (-subagent-) → true', () => {
+            expect(isInvalidWorkspaceName('blender-mcp-subagent-1')).toBe(true);
+            expect(isInvalidWorkspaceName('blender-mcp-subagent-2 (Workspace)')).toBe(true);
+        });
+
+        it('subwindows パス含む → true', () => {
+            expect(isInvalidWorkspaceName('subwindows')).toBe(true);
         });
     });
 
@@ -221,3 +226,19 @@ describe('isInvalidWorkspaceName', () => {
         });
     });
 });
+
+import { extractWorkspaceName } from '../cdpTargets';
+
+describe('extractWorkspaceName', () => {
+    it('通常タイトルからワークスペース名を抽出する', () => {
+        expect(extractWorkspaceName('my-project — Antigravity')).toBe('my-project');
+        expect(extractWorkspaceName('main.ts - my-project - Visual Studio Code')).toBe('my-project');
+    });
+
+    it('(Workspace) サフィックスを正しく除去する', () => {
+        expect(extractWorkspaceName('blender-mcp-subagent-1 (Workspace) — Antigravity')).toBe('blender-mcp-subagent-1');
+        expect(extractWorkspaceName('blender-mcp-subagent-2 (Workspace)')).toBe('blender-mcp-subagent-2');
+        expect(extractWorkspaceName('my-project (ワークスペース) — Antigravity')).toBe('my-project');
+    });
+});
+

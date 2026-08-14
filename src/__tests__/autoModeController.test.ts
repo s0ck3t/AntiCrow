@@ -189,15 +189,15 @@ describe('autoModeController — stopAutoMode', () => {
 
     describe('停止理由の表示', () => {
         const testCases: Array<{ reason: string; expected: string }> = [
-            { reason: 'max_steps', expected: '最大ステップ数' },
-            { reason: 'completed', expected: '全タスク完了' },
-            { reason: 'similarity', expected: '類似した結果' },
-            { reason: 'safety_stop', expected: 'セーフティガード' },
-            { reason: 'confirm_stop', expected: '確認モード' },
-            { reason: 'new_session', expected: '新しい連続オートモードセッション' },
-            { reason: 'error', expected: 'エラーが発生' },
-            { reason: 'auto_reset', expected: '既存の連続オートモードを停止' },
-            { reason: 'manual', expected: '手動で停止' },
+            { reason: 'max_steps', expected: 'Reached maximum step limit' },
+            { reason: 'completed', expected: 'AI determined all tasks are complete' },
+            { reason: 'similarity', expected: 'Similar output detected in consecutive steps' },
+            { reason: 'safety_stop', expected: 'Stopped by user via safety guard' },
+            { reason: 'confirm_stop', expected: 'Stopped by user via confirmation prompt' },
+            { reason: 'new_session', expected: 'New continuous auto mode session started' },
+            { reason: 'error', expected: 'An error occurred' },
+            { reason: 'auto_reset', expected: 'Stopped existing auto mode session due to execution of a new plan' },
+            { reason: 'manual', expected: 'Manually stopped by user' },
         ];
 
         for (const { reason, expected } of testCases) {

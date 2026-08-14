@@ -785,6 +785,7 @@ export const messages = {
   'pipeline.replyHeader': 'Reply to message (by {0})',
   'pipeline.replyInstruction': 'Instructions for the above message',
   'pipeline.launching': '🚀 Launching workspace "{0}". Please wait...',
+  'pipeline.workspaceMismatch': '⚠️ Requested workspace "{0}", but connected to "{1}".\nPlease open "{0}" in a separate window.',
   'pipeline.connectionFailed': 'Failed to connect to workspace "{0}": {1}',
   'pipeline.checkAttachments': '(Please check the attached files)',
   'pipeline.planGenerating': '✅ Message delivered. Generating plan...',

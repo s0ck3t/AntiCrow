@@ -18,23 +18,23 @@ export function buildModeListEmbed(
     currentMode: string | null,
 ): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
     const embed = new EmbedBuilder()
-        .setTitle('⚡ モード管理')
+        .setTitle('⚡ Mode Management')
         .setColor(0x5865F2)
         .setTimestamp();
 
     if (modes.length === 0 && !currentMode) {
         embed.setDescription(
-            'モード情報を取得できませんでした。\n' +
-            'チャットパネルが開いていることを確認してください。',
+            'Could not retrieve mode information.\n' +
+            'Please ensure the chat panel is open.',
         );
         return { embeds: [embed], components: [] };
     }
 
-    // 現在のモード
-    const currentDisplay = currentMode || '不明';
-    embed.setDescription(`**現在のモード:** ${currentDisplay}`);
+    // Current mode
+    const currentDisplay = currentMode || 'Unknown';
+    embed.setDescription(`**Current Mode:** ${currentDisplay}`);
 
-    // モード一覧をフィールドに追加
+    // Add modes list to field
     if (modes.length > 0) {
         const normalizedCurrent = currentMode?.trim().toLowerCase() || '';
         const modeList = modes.map((m) => {
@@ -48,19 +48,19 @@ export function buildModeListEmbed(
         }).join('\n');
 
         embed.addFields({
-            name: `📋 利用可能なモード (${modes.length}件)`,
+            name: `📋 Available Modes (${modes.length})`,
             value: modeList.length > 1024 ? modeList.substring(0, 1021) + '...' : modeList,
         });
     }
 
-    // ボタン作成（各モードに切替ボタン）
+    // Create buttons (switch button per mode)
     const components: ActionRowBuilder<ButtonBuilder>[] = [];
 
-    // モードを5個ずつの ActionRow にまとめる
+    // Group modes into ActionRows of 5
     const normalizedCurrentBtn = currentMode?.trim().toLowerCase() || '';
     const displayModes = modes.slice(0, 20);
     for (let i = 0; i < displayModes.length; i += 5) {
-        if (components.length >= 4) break; // リフレッシュ用に1行確保
+        if (components.length >= 4) break; // Reserve 1 row for refresh
 
         const row = new ActionRowBuilder<ButtonBuilder>();
         const chunk = displayModes.slice(i, i + 5);
@@ -73,7 +73,7 @@ export function buildModeListEmbed(
                 modeLower.includes(normalizedCurrentBtn) ||
                 normalizedCurrentBtn.includes(modeLower)
             );
-            // インデックスベースの custom_id で一意性を保証
+            // Index-based custom_id for uniqueness
             const modeIndex = i + j;
 
             row.addComponents(
@@ -88,12 +88,12 @@ export function buildModeListEmbed(
         components.push(row);
     }
 
-    // リフレッシュボタン
+    // Refresh button
     if (components.length < 5) {
         const refreshRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
                 .setCustomId('mode_refresh')
-                .setLabel('🔄 更新')
+                .setLabel('🔄 Refresh')
                 .setStyle(ButtonStyle.Primary),
         );
         components.push(refreshRow);
@@ -103,7 +103,7 @@ export function buildModeListEmbed(
 }
 
 // -----------------------------------------------------------------------
-// モード切替結果 Embed
+// Mode Switch Result Embed
 // -----------------------------------------------------------------------
 
 export function buildModeSwitchResultEmbed(
@@ -112,16 +112,16 @@ export function buildModeSwitchResultEmbed(
 ): EmbedBuilder {
     if (success) {
         return new EmbedBuilder()
-            .setTitle('✅ モードを切り替えました')
-            .setDescription(`**${modeName}** に切り替えました。`)
+            .setTitle('✅ Mode Switched')
+            .setDescription(`Switched to **${modeName}**.`)
             .setColor(0x57F287)
             .setTimestamp();
     } else {
         return new EmbedBuilder()
-            .setTitle('❌ モード切替に失敗')
+            .setTitle('❌ Mode Switch Failed')
             .setDescription(
-                `**${modeName}** への切り替えに失敗しました。\n` +
-                'チャットパネルが開いていることを確認し、もう一度お試しください。',
+                `Failed to switch to **${modeName}**.\n` +
+                'Please ensure the chat panel is open and try again.',
             )
             .setColor(0xED4245)
             .setTimestamp();

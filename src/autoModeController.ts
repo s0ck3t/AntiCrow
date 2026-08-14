@@ -93,10 +93,10 @@ interface DangerousPattern {
  * autoModeController（レイヤーA）と cdpUI（レイヤーC）の両方で使用する。
  */
 export const DANGEROUS_PATTERNS: DangerousPattern[] = [
-    // ----- ファイルシステム破壊（3パターン） -----
+    // ----- Filesystem destruction (3 patterns) -----
     {
         pattern: /rm\s+-rf|rmdir\s+\/s/i,
-        reason: '再帰的ファイル削除',
+        reason: 'Recursive file deletion',
         severity: 'block',
         category: 'filesystem',
         allowPatterns: [
@@ -105,33 +105,33 @@ export const DANGEROUS_PATTERNS: DangerousPattern[] = [
     },
     {
         pattern: />\s*\/dev\/null|truncate/i,
-        reason: 'ファイル内容破壊',
+        reason: 'File content truncation',
         severity: 'block',
         category: 'filesystem',
     },
     {
         pattern: /format\s+[a-z]:|diskpart/i,
-        reason: 'ディスクフォーマット',
+        reason: 'Disk formatting',
         severity: 'block',
         category: 'filesystem',
     },
 
-    // ----- Git破壊操作（3パターン） -----
+    // ----- Destructive Git actions (3 patterns) -----
     {
         pattern: /git\s+reset\s+--hard/i,
-        reason: 'コミット履歴の強制リセット',
+        reason: 'Forced commit history reset',
         severity: 'block',
         category: 'git',
     },
     {
         pattern: /git\s+push\s+--force|git\s+push\s+-f/i,
-        reason: '強制プッシュ',
+        reason: 'Forced push',
         severity: 'warn',
         category: 'git',
     },
     {
         pattern: /git\s+clean\s+-fd/i,
-        reason: '未追跡ファイルの強制削除',
+        reason: 'Forced deletion of untracked files',
         severity: 'warn',
         category: 'git',
         allowPatterns: [
@@ -139,98 +139,98 @@ export const DANGEROUS_PATTERNS: DangerousPattern[] = [
         ],
     },
 
-    // ----- DB破壊（2パターン） -----
+    // ----- Database destruction (2 patterns) -----
     {
         pattern: /DROP\s+(TABLE|DATABASE)/i,
-        reason: 'テーブル/DB削除',
+        reason: 'Table/database deletion',
         severity: 'block',
         category: 'database',
     },
     {
         pattern: /TRUNCATE\s+TABLE/i,
-        reason: 'テーブル全件削除',
+        reason: 'Table truncation',
         severity: 'block',
         category: 'database',
     },
 
-    // ----- 暗号資産保護（10パターン） -----
+    // ----- Cryptographic secret protection (10 patterns) -----
     {
         pattern: /private[_\s]?key|secret[_\s]?key/i,
-        reason: '秘密鍵へのアクセス',
+        reason: 'Accessing private keys',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /seed[_\s]?phrase|mnemonic|recovery[_\s]?phrase/i,
-        reason: 'シードフレーズへのアクセス',
+        reason: 'Accessing seed phrases',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /keypair.*export|export.*keypair/i,
-        reason: 'キーペアのエクスポート',
+        reason: 'Keypair export',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /solana.*keypair|phantom.*seed|metamask.*seed|backpack.*seed/i,
-        reason: 'ウォレット固有の秘密情報',
+        reason: 'Wallet secret information',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /\.json.*keypair|id\.json|devnet\.json/i,
-        reason: 'Solanaキーペアファイル',
+        reason: 'Solana keypair file',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /transfer.*all|drain.*wallet|sweep.*funds/i,
-        reason: '資金ドレイン',
+        reason: 'Fund draining',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /withdraw.*max|withdraw.*all|empty.*wallet/i,
-        reason: '全額出金',
+        reason: 'Withdrawing all funds',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /curl.*secret|fetch.*private_key|post.*mnemonic/i,
-        reason: '秘密情報の外部送信',
+        reason: 'Exfiltrating secret data',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /\.env.*(cat|type|echo|print|log)/i,
-        reason: '.envファイルの内容出力',
+        reason: 'Printing .env file content',
         severity: 'block',
         category: 'crypto',
     },
     {
         pattern: /api[_\s]?key.*(curl|fetch|post|send)/i,
-        reason: 'APIキーの外部送信',
+        reason: 'Exfiltrating API keys',
         severity: 'block',
         category: 'crypto',
     },
 
-    // ----- プロンプトインジェクション（3パターン） -----
+    // ----- Prompt injection (3 patterns) -----
     {
         pattern: /ignore\s+previous|disregard\s+instructions/i,
-        reason: '指示無視攻撃',
+        reason: 'Prompt injection attack',
         severity: 'warn',
         category: 'injection',
     },
     {
         pattern: /system\s+prompt|you\s+are\s+now/i,
-        reason: 'システムプロンプト上書き',
+        reason: 'System prompt override',
         severity: 'warn',
         category: 'injection',
     },
     {
         pattern: /\beval\b|exec\(|Function\(/i,
-        reason: '動的コード実行',
+        reason: 'Dynamic code execution',
         severity: 'block',
         category: 'injection',
     },
@@ -381,17 +381,17 @@ export async function startAutoMode(
     // Discord 開始通知
     try {
         const embed = buildEmbed(
-            `🚀 **連続オートモード開始**\n━━━━━━━━━━━━━━━━━━━━\n\n`
-            + `📝 **タスク:** ${prompt.substring(0, 200)}\n`
-            + `⚙️ **設定:** 最大${mergedConfig.maxSteps}ステップ / ${Math.round(mergedConfig.maxDuration / 60000)}分\n`
-            + `🔒 **セーフティガード:** 有効`,
+            `🚀 **Continuous Auto Mode Started**\n━━━━━━━━━━━━━━━━━━━━\n\n`
+            + `📝 **Task:** ${prompt.substring(0, 200)}\n`
+            + `⚙️ **Settings:** Max ${mergedConfig.maxSteps} steps / ${Math.round(mergedConfig.maxDuration / 60000)} min\n`
+            + `🔒 **Safety Guard:** Enabled`,
             EmbedColor.Info,
             true,
         );
 
         const stopButton = new ButtonBuilder()
             .setCustomId(`auto_stop:${wsKey}`)
-            .setLabel('停止')
+            .setLabel('Stop')
             .setStyle(ButtonStyle.Danger);
 
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(stopButton);
@@ -599,41 +599,41 @@ async function sendStopSummary(
 
     logInfo(`autoMode: stopped — reason=${reason} wsKey=${state.wsKey} steps=${state.currentStep} duration=${formatDuration(totalDuration)} paused=${formatDuration(state.totalPausedMs)}`);
 
-    // 終了理由の決定
+    // Determine stop reason text
     let reasonText: string;
     switch (reason) {
         case 'max_steps':
-            reasonText = `最大ステップ数（${state.maxSteps}）に到達しました`;
+            reasonText = `Reached maximum step limit (${state.maxSteps})`;
             break;
         case 'max_duration':
-            reasonText = `最大実行時間（${Math.round(state.maxDuration / 60000)}分）に到達しました`;
+            reasonText = `Reached maximum duration (${Math.round(state.maxDuration / 60000)} min)`;
             break;
         case 'completed':
-            reasonText = '🎉 AIが全タスク完了と判断しました';
+            reasonText = '🎉 AI determined all tasks are complete';
             break;
         case 'similarity':
-            reasonText = '⚠️ 直前のステップと類似した結果が検出されました（無限ループ防止）';
+            reasonText = '⚠️ Similar output detected in consecutive steps (infinite loop prevention)';
             break;
         case 'safety_stop':
-            reasonText = '🛑 セーフティガードによりユーザーが停止しました';
+            reasonText = '🛑 Stopped by user via safety guard';
             break;
         case 'confirm_stop':
-            reasonText = '🛑 確認モードによりユーザーが停止しました';
+            reasonText = '🛑 Stopped by user via confirmation prompt';
             break;
         case 'new_session':
-            reasonText = '新しい連続オートモードセッションが開始されました';
+            reasonText = 'New continuous auto mode session started';
             break;
         case 'error':
-            reasonText = '⚠️ エラーが発生しました';
+            reasonText = '⚠️ An error occurred';
             break;
         case 'auto_reset':
-            reasonText = '⚠️ 新しい計画の実行に伴い、既存の連続オートモードを停止しました';
+            reasonText = '⚠️ Stopped existing auto mode session due to execution of a new plan';
             break;
         default:
-            reasonText = 'ユーザーが手動で停止しました';
+            reasonText = 'Manually stopped by user';
     }
 
-    // Discord 終了サマリー通知
+    // Discord stop summary notification
     try {
         const historyLines = state.history.map((s) => {
             const emoji = s.safetyResult.safe ? '✅' : '⚠️';
@@ -642,11 +642,11 @@ async function sendStopSummary(
         }).join('\n');
 
         const embed = buildEmbed(
-            `📊 **連続オートモード完了**\n━━━━━━━━━━━━━━━━━━━━\n\n`
-            + `✅ **完了ステップ:** ${state.currentStep}/${state.maxSteps}\n`
-            + `⏱️ **合計時間:** ${formatDuration(totalDuration)}${state.totalPausedMs > 0 ? ` (⏸️ 一時停止: ${formatDuration(state.totalPausedMs)})` : ''}\n`
-            + `🛡️ **セーフティ発動:** ${safetyCount}回\n\n`
-            + (historyLines ? `📋 **実行履歴:**\n${historyLines}\n\n` : '')
+            `📊 **Continuous Auto Mode Complete**\n━━━━━━━━━━━━━━━━━━━━\n\n`
+            + `✅ **Completed Steps:** ${state.currentStep}/${state.maxSteps}\n`
+            + `⏱️ **Total Time:** ${formatDuration(totalDuration)}${state.totalPausedMs > 0 ? ` (⏸️ Paused: ${formatDuration(state.totalPausedMs)})` : ''}\n`
+            + `🛡️ **Safety Triggers:** ${safetyCount}\n\n`
+            + (historyLines ? `📋 **Execution History:**\n${historyLines}\n\n` : '')
             + reasonText,
             EmbedColor.Success,
             true,
@@ -768,25 +768,25 @@ function buildAutonomousPrompt(fallbackPrompt: string, wsKey?: string): string {
 
     const { originalPrompt, history } = currentState;
 
-    // 直前のステップ結果サマリーを取得
+    // Get previous step summary
     const lastStep = history.length > 0 ? history[history.length - 1] : null;
     const lastStepSummary = lastStep
         ? lastStep.response.substring(0, 500)
-        : '（まだステップが実行されていません）';
+        : '(No steps executed yet)';
 
     const autonomousPrompt = [
-        '以下のタスクの続きを自動的に実行してください。',
+        'Please automatically continue the following task.',
         '',
-        '【元のタスク目標】',
+        '【Original Task Goal】',
         originalPrompt,
         '',
-        '【直前のステップの結果サマリー】',
+        '【Previous Step Result Summary】',
         lastStepSummary,
         '',
-        '【指示】',
-        '- 元のタスク目標に向けて、残りの作業を洗い出してください',
-        '- 次に実行すべきアクションを決定し、実行してください',
-        '- チームモードが有効な場合は、tasks 配列で並列実行可能なタスクを分割してください',
+        '【Instructions】',
+        '- Identify remaining work required to achieve the original task goal',
+        '- Determine the next appropriate action and execute it',
+        '- If team mode is enabled, decompose parallelisable work into the tasks array',
     ].join('\n');
 
     logInfo(`autoMode: buildAutonomousPrompt — using originalPrompt + lastStep summary (step ${currentState.currentStep})`);
@@ -874,9 +874,9 @@ function buildAutoPrompt(channelId: string, initialPrompt?: string, wsKey?: stri
         }
     }
 
-    // チームモード時: プロンプト末尾にチーム活用の指示を追加
+    // Team mode: Append team instructions to prompt tail
     if (currentState?.isTeamMode) {
-        result += `\n\nエージェントチームモードが有効です。3ファイル以上にまたがる変更や独立した複数の作業がある場合は、必ず \`tasks\` 配列を使ってチームで分担してください。同じファイルを複数タスクで修正しないこと。軽量タスク（単一ファイル修正や確認作業）の場合のみ tasks を省略してください。`;
+        result += `\n\nAgent team mode is enabled. If changes span 3 or more files or involve multiple independent tasks, always use the \`tasks\` array to distribute work across the team. Do not modify the same files across multiple tasks. Omit tasks only for lightweight operations (single file edits or lookups).`;
         logDebug('autoMode: buildAutoPrompt — team mode instruction appended');
     }
 
@@ -965,13 +965,18 @@ function shouldContinue(latestResponse: string, currentState: AutoModeState, sug
             // 完了フレーズは「全タスク完了」を明確に示す完全な文のみ
             // 短い部分一致（「作業は完了」等）は誤検知しやすいため除外
             const completionPhrases = [
+                'all tasks have been completed',
+                'all tasks are completed',
+                'all tasks completed',
+                'all steps have been completed',
+                'all steps are completed',
+                'all steps completed',
+                'task execution complete',
                 '全てのタスクが完了しました',
                 'すべてのタスクが完了しました',
                 '全てのステップが完了しました',
                 'すべてのステップが完了しました',
                 '全タスク完了しました',
-                'all tasks have been completed',
-                'all steps have been completed',
             ];
 
             // レスポンスから振り返り・コードブロック・引用を除去してクリーンテキストを生成
@@ -1057,15 +1062,15 @@ async function pauseForSafety(
     // Discord セーフティ警告通知
     try {
         const matchedLineText = safetyResult.matchedLine
-            ? `📄 **対象:** \`${safetyResult.matchedLine.substring(0, 150)}\`\n\n`
+            ? `📄 **Target:** \`${safetyResult.matchedLine.substring(0, 150)}\`\n\n`
             : '';
         const embed = buildEmbed(
-            `🚨 **セーフティガード発動**\n━━━━━━━━━━━━━━━━━━━━\n\n`
-            + `⚠️ **危険なアクションを検知しました**\n\n`
-            + `🔍 **検知内容:** ${safetyResult.reason}\n`
-            + `📝 **パターン:** \`${safetyResult.pattern}\`\n`
+            `🚨 **Safety Guard Triggered**\n━━━━━━━━━━━━━━━━━━━━\n\n`
+            + `⚠️ **Dangerous action detected**\n\n`
+            + `🔍 **Detection:** ${safetyResult.reason}\n`
+            + `📝 **Pattern:** \`${safetyResult.pattern}\`\n`
             + matchedLineText
-            + `⏸️ 連続オートモードを一時停止しました`,
+            + `⏸️ Continuous auto mode paused`,
             EmbedColor.Warning,
             true,
         );
@@ -1073,19 +1078,19 @@ async function pauseForSafety(
         const effectiveKey = wsKey ?? currentState.wsKey;
         const approveBtn = new ButtonBuilder()
             .setCustomId(`safety_approve:${effectiveKey}`)
-            .setLabel('承認')
+            .setLabel('Approve')
             .setStyle(ButtonStyle.Success)
             .setEmoji('✅');
 
         const skipBtn = new ButtonBuilder()
             .setCustomId(`safety_skip:${effectiveKey}`)
-            .setLabel('スキップ')
+            .setLabel('Skip')
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('⏭️');
 
         const stopBtn = new ButtonBuilder()
             .setCustomId(`safety_stop:${effectiveKey}`)
-            .setLabel('停止')
+            .setLabel('Stop')
             .setStyle(ButtonStyle.Danger)
             .setEmoji('🛑');
 
@@ -1159,23 +1164,23 @@ async function sendStepCompleteNotification(
             const emojis = ['💡', '🔧', '🚀'];
             return `  ${i + 1}. ${emojis[i] || '💡'} ${s.label}`;
         });
-        suggestionText = `\n\n💡 **AIが参照した提案:**\n${lines.join('\n')}`;
+        suggestionText = `\n\n💡 **AI Referenced Suggestions:**\n${lines.join('\n')}`;
     }
 
-    // Phase 2: diffSummary を通知に含める
+    // Phase 2: Include diffSummary in notification
     let diffText = '';
     if (diffSummary) {
-        diffText = `\n\n📊 **変更差分:**\n\`\`\`\n${diffSummary}\`\`\``;
+        diffText = `\n\n📊 **Changes:**\n\`\`\`\n${diffSummary}\`\`\``;
     }
 
     try {
         const embed = buildEmbed(
-            `✅ **ステップ ${currentState.currentStep}/${currentState.maxSteps} 完了** (${formatDuration(stepResult.duration)})\n`
+            `✅ **Step ${currentState.currentStep}/${currentState.maxSteps} Complete** (${formatDuration(stepResult.duration)})\n`
             + `━━━━━━━━━━━━━━━━━━━━\n\n`
             + `📄 ${responseSummary}`
             + suggestionText
             + diffText
-            + `\n\n⏱️ **経過:** ${formatDuration(elapsed)} / ${Math.round(currentState.maxDuration / 60000)}分\n`
+            + `\n\n⏱️ **Elapsed:** ${formatDuration(elapsed)} / ${Math.round(currentState.maxDuration / 60000)} min\n`
             + progressBar,
             EmbedColor.Progress,
         );
@@ -1183,7 +1188,7 @@ async function sendStepCompleteNotification(
         const effectiveStepKey = wsKey ?? currentState.wsKey;
         const stopButton = new ButtonBuilder()
             .setCustomId(`auto_stop:${effectiveStepKey}`)
-            .setLabel('停止')
+            .setLabel('Stop')
             .setStyle(ButtonStyle.Danger);
 
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(stopButton);
@@ -1191,13 +1196,13 @@ async function sendStepCompleteNotification(
         await channel.send({ embeds: [embed], components: [row] });
     } catch (e) {
         logError('autoMode: failed to send step notification', e);
-        // 通知失敗でもループは続行
+        // Continue loop even if notification fails
     }
 }
 
 /**
- * セーフティ警告（warn レベル）を Discord に送信する。
- * block とは異なり、ループは一時停止しない。
+ * Sends safety warning (warn severity) to Discord.
+ * Unlike block, this does not pause the execution loop.
  */
 async function sendSafetyWarning(
     channel: TextChannel,
@@ -1205,14 +1210,14 @@ async function sendSafetyWarning(
 ): Promise<void> {
     try {
         const matchedLineText = safetyResult.matchedLine
-            ? `📄 **対象:** \`${safetyResult.matchedLine.substring(0, 150)}\`\n\n`
+            ? `📄 **Target:** \`${safetyResult.matchedLine.substring(0, 150)}\`\n\n`
             : '';
         const embed = buildEmbed(
-            `⚠️ **セーフティ警告**\n\n`
-            + `🔍 **検知内容:** ${safetyResult.reason}\n`
-            + `📝 **パターン:** \`${safetyResult.pattern}\`\n`
+            `⚠️ **Safety Warning**\n\n`
+            + `🔍 **Detection:** ${safetyResult.reason}\n`
+            + `📝 **Pattern:** \`${safetyResult.pattern}\`\n`
             + matchedLineText
-            + `ℹ️ 重大度が低いため、ループは続行します。`,
+            + `ℹ️ Low severity — continuing execution loop.`,
             EmbedColor.Warning,
         );
         await channel.send({ embeds: [embed] });
@@ -1337,15 +1342,15 @@ async function buildDiffSummary(wsKey: string): Promise<string | undefined> {
 function formatDuration(ms: number): string {
     if (ms < 0) ms = 0;
     const seconds = Math.floor(ms / 1000);
-    if (seconds < 60) return `${seconds}秒`;
+    if (seconds < 60) return `${seconds}s`;
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     if (minutes < 60) {
-        return remainingSeconds > 0 ? `${minutes}分${remainingSeconds}秒` : `${minutes}分`;
+        return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
     }
     const hours = Math.floor(minutes / 60);
     const remainingMinutes = minutes % 60;
-    return `${hours}時間${remainingMinutes}分`;
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 /**

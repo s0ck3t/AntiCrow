@@ -347,7 +347,7 @@ describe('messageHandler', () => {
             const channel = msg.channel;
             expect(channel.send).toHaveBeenCalled();
             const sendArgs = channel.send.mock.calls[0][0];
-            expect(sendArgs.embeds[0].description).toContain('初期化されていません');
+            expect(sendArgs.embeds[0].description).toContain('initialised');
         });
 
         it('should reject when planStore is missing', async () => {

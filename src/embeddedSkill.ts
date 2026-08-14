@@ -24,314 +24,298 @@ export const ANTICROW_SKILL_VERSION = '1.2.0';
 export const ANTICROW_SKILL_CONTENT = `---
 name: anticrow
 version: ${ANTICROW_SKILL_VERSION}
-description: AntiCrow 拡張機能の機能を活用するためのスキル。チームモード、連続オートモード、IPC通信、進捗報告、ファイル送信などの使い方を理解する。
+description: Skill for leveraging the AntiCrow extension. Understand how to use team mode, continuous auto mode, IPC communication, progress reporting, suggestions, and Discord slash commands.
 ---
 
-# AntiCrow スキル
+# AntiCrow Skill
 
-AntiCrow は Discord 経由でタスクを受け取り、Antigravity エージェントに実行を委任する VS Code 拡張機能です。
-このスキルでは、AntiCrow の機能を最大限に活用する方法を説明します。
+AntiCrow is a VS Code extension that receives tasks via Discord and delegates their execution to Antigravity agents.
+This skill explains how to maximise the capabilities of AntiCrow.
 
-## チームモード（並列サブエージェント実行）
+## Team Mode (Parallel Subagent Execution)
 
-チームモードは、複数の独立したタスクをサブエージェントに分散して並列実行する機能です。
+Team mode distributes independent tasks across multiple subagents for concurrent execution.
 
-### 使い方
+### Usage
 
-計画生成（plan_generation）時に \\\`tasks\\\` 配列を出力すると、各タスクが個別のサブエージェントに割り当てられます。
+When generating a plan (\\\`task: "plan_generation"\\\`), output a \\\`tasks\\\` array so each task is assigned to an individual subagent.
 
 \\\`\\\`\\\`json
 {
   "tasks": [
-    "src/auth.ts に新しい認証ロジックを実装する",
-    "src/__tests__/auth.test.ts にユニットテストを追加する",
-    "src/docs/auth.md にドキュメントを作成する"
+    "Implement new authentication logic in src/auth.ts",
+    "Add unit tests in src/__tests__/auth.test.ts",
+    "Create documentation in src/docs/auth.md"
   ]
 }
 \\\`\\\`\\\`
 
-### タスク分割の判断基準
+### Decision Criteria for Task Splitting
 
-**tasks を使う（チームモード）:**
-- 3ファイル以上にまたがる変更
-- 新機能の実装＋テスト＋デプロイが必要な作業
-- 独立した複数の問題を同時に修正する作業
-- 調査・実装・検証が別々に並行可能な作業
+**Use tasks (Team Mode):**
+- Changes spanning 3 or more files
+- New feature implementation + testing + documentation required
+- Fixing multiple independent issues simultaneously
+- Tasks where research, implementation, and verification can run in parallel
 
-**tasks を使わない（メインエージェント単独）:**
-- 単一ファイルの修正・設定変更
-- 情報の確認・質問への回答
-- 簡単なバグ修正（1-2ファイル以内）
-- 型チェック・テスト・ビルドのみの実行
-- ドキュメント・コメントの修正
+**Do NOT use tasks (Main agent only):**
+- Single file edits or configuration changes
+- Information lookups or answering questions
+- Simple bug fixes (1-2 files)
+- Running type checks, tests, or builds only
+- Minor documentation or comment updates
 
-### 重要なルール
+### Important Rules
 
-- 各タスクは**独立して実行可能な単位**にすること
-- **同じファイルを複数のタスクで修正しない**こと（コンフリクトの原因）
-- タスクが1つしかない場合は \\\`tasks\\\` を省略すること
-- **VSIX デプロイはサブエージェントが行わない**（メインエージェントが最後に実行）
-  - サブエージェントは VSIX ファイル作成（compile → bundle → vsce package）まで
-  - \\\`antigravity --install-extension\\\` はメインエージェントの責務
-  - サブエージェントが VSIX をインストールすると拡張ホスト再起動で IPC が中断し、レスポンスが届かなくなる
+- Keep each task as an **independent, actionable unit**
+- **Do not modify the same file across multiple tasks** to prevent merge conflicts
+- If there is only one task, omit the \\\`tasks\\\` array
+- **Subagents must not perform VSIX deployment** (the main agent performs this at the end)
+  - Subagents build the VSIX file (compile → bundle → vsce package)
+  - \\\`antigravity --install-extension\\\` is solely the main agent's responsibility
+  - If a subagent installs a VSIX, the extension host reloads, severing IPC communication
 
-### サブエージェント・ウィンドウ再利用
+### Subagent Window Reuse
 
-連続オートモード中は、完了したサブエージェントのウィンドウがアイドルプールに保持されます。
-次のステップで再利用されるため、ウィンドウの起動コストが削減されます。
-\\\`.anticrow/team.json\\\` の \\\`enableWindowReuse\\\` で有効/無効を切り替えられます。
+During continuous auto mode, completed subagent windows are retained in an idle pool and reused in subsequent steps, eliminating window launch overhead.
+This can be toggled via \\\`enableWindowReuse\\\` in \\\`.anticrow/team.json\\\`.
 
-## 連続オートモード（自律実行ループ）
+## Continuous Auto Mode (Autonomous Execution Loop)
 
-連続オートモードは、AI が自律的に次のアクションを決定し、連続でタスクを実行する機能です。
+Continuous auto mode enables the AI to autonomously determine the next actions and execute tasks continuously.
 
-### 使い方
+### Usage
 
-Discord で \\\`/auto\\\` コマンドを使うか、提案ボタンの「エージェントに任せる」を押すと開始します。
+Start continuous auto mode via the Discord \\\`/auto\\\` command or by clicking the "Let Agent Decide" button on suggestions.
 
 \\\`\\\`\\\`
-/auto LPをリニューアルして
-/auto --steps 15 --confirm semi 全体をリファクタリングして
+/auto Redesign the landing page
+/auto --steps 15 --confirm semi Refactor the entire project
 \\\`\\\`\\\`
 
-### 設定オプション
+### Configuration Options
 
-- \\\`--steps N\\\`: 最大ステップ数（1-20、デフォルト: 10）
-- \\\`--duration N\\\`: 最大実行時間・分（5-120、デフォルト: 30分）
-- \\\`--confirm MODE\\\`: 確認モード（auto / semi / manual）
-- \\\`--select MODE\\\`: 次アクション選択方式（auto-delegate / first / ai-select）
+- \\\`--steps N\\\`: Maximum number of steps (1-20, default: 10)
+- \\\`--duration N\\\`: Maximum run duration in minutes (5-120, default: 30m)
+- \\\`--confirm MODE\\\`: Confirmation mode (auto / semi / manual)
+- \\\`--select MODE\\\`: Next action selection method (auto-delegate / first / ai-select)
 
-### 確認モード
+### Confirmation Modes
 
-- **auto**: 全ステップを自動実行（デフォルト）
-- **semi**: 偶数ステップごとにユーザー確認を挟む
-- **manual**: 毎ステップでユーザー確認を要求
+- **auto**: Automatically executes all steps without interruption (default)
+- **semi**: Prompts for user confirmation on even-numbered steps
+- **manual**: Prompts for user confirmation on every step
 
-### セーフティガード
+### Safety Guards
 
-連続オートモードには21パターンの危険操作検知が組み込まれています:
-- **ファイルシステム破壊**: rm -rf, format, truncate
-- **Git 破壊操作**: reset --hard, push --force, clean -fd
-- **DB 破壊**: DROP TABLE/DATABASE, TRUNCATE TABLE
-- **暗号資産保護**: 秘密鍵、シードフレーズ、資金ドレインの検出（10パターン）
-- **プロンプトインジェクション**: 指示無視、システムプロンプト上書き、eval/exec
+Continuous auto mode includes 21 built-in dangerous operation detection patterns:
+- **Filesystem destruction**: rm -rf, format, truncate
+- **Destructive Git actions**: reset --hard, push --force, clean -fd
+- **Database destruction**: DROP TABLE/DATABASE, TRUNCATE TABLE
+- **Cryptographic secret protection**: Private keys, seed phrases, fund draining detection (10 patterns)
+- **Prompt injection protection**: Instruction overrides, system prompt manipulation, dynamic code execution
 
-severity が block の場合はループが一時停止し、Discord で承認/スキップ/停止を選択できます。
+When a pattern with block severity is triggered, the loop pauses and offers Approve / Skip / Stop choices in Discord.
 
-### 完了判定
+### Completion Detection
 
-オートモードはレスポンス末尾15行の完了フレーズで自動停止します。
-ただし \\\`SUGGESTIONS\\\` タグがある場合は完了フレーズを無視します（提案がある = まだ続きがある）。
+Auto mode automatically stops when completion phrases are detected in the last 15 lines of a response.
+However, if a \\\`SUGGESTIONS\\\` tag is present, completion phrases are disregarded (suggestions imply further steps).
 
-## スケジュール実行
+## Scheduled Execution
 
-cron 式を使って定期的にタスクを自動実行できます。
+You can schedule recurring tasks using standard cron expressions.
 
-### 計画生成での指定
+### Plan Generation Specification
 
 \\\`\\\`\\\`json
 {
   "cron": "0 9 * * 1-5",
-  "timezone": "Etc/GMT-9",
-  "prompt": "毎朝のテストを実行して"
+  "timezone": "Europe/London",
+  "prompt": "Run daily morning tests"
 }
 \\\`\\\`\\\`
 
-- \\\`cron\\\`: 5項目標準 cron 式（秒は不要）
-- 即時実行の場合は \\\`"now"\\\` を指定
-- \\\`/schedules\\\` コマンドで登録済みスケジュールの一覧・管理が可能
+- \\\`cron\\\`: Standard 5-field cron expression (seconds not required)
+- Specify \\\`"now"\\\` for immediate one-off execution
+- Use the \\\`/schedules\\\` command to view and manage registered schedules
 
-## カスタマイズ機能
+## Customisation (Persona & Soul)
 
-\\\`~/.anticrow/SOUL.md\\\` にキャラクター設定を書くことで、AntiCrow の口調や呼び方を変更できます。
+Configure persona settings in \\\`~/.anticrow/SOUL.md\\\` to customise AntiCrow's tone and style.
 
-### 計画生成での指定
+### Plan Generation Specification
 
-ユーザーがカスタマイズを要求した場合、\\\`target: "anticrow_customization"\\\` を指定する:
+When a user requests persona customisation, specify \\\`target: "anticrow_customization"\\\`:
 
 \\\`\\\`\\\`json
 {
   "target": "anticrow_customization",
-  "prompt": "語尾を「なのだ」にして"
+  "prompt": "Adopt a friendly, encouraging mentor persona"
 }
 \\\`\\\`\\\`
 
-Discord の \\\`/soul\\\` コマンドで現在の設定を確認・リセットできます。
+Use the Discord \\\`/soul\\\` command to review or reset customisations.
 
-## テンプレート機能
+## Prompt Templates
 
-よく使うプロンプトをテンプレートとして保存し、再利用できます。
-\\\`/template\\\` コマンドでテンプレートの一覧・実行・削除が可能です。
+Save frequently used prompts as reusable templates.
+Use the \\\`/templates\\\` command to list, execute, or delete templates.
 
-## ワークスペース自動作成
+## Automatic Workspace Creation
 
-\\\`/workspace\\\` コマンドから新しいワークスペースを作成できます。
+Create new project workspaces directly via the \\\`/workspace\\\` command.
 
-### 前提設定
+### Configuration
 
-\\\`antiCrow.workspaceParentDirs\\\` に新規ワークスペースの配置先ディレクトリを設定:
+Configure target parent directories in \\\`antiCrow.workspaceParentDirs\\\`:
 
 \\\`\\\`\\\`json
 "antiCrow.workspaceParentDirs": ["C:\\\\Users\\\\user\\\\dev", "C:\\\\Users\\\\user\\\\projects"]
 \\\`\\\`\\\`
 
-### 計画生成での指定
+### Plan Generation Specification
 
-ユーザーが新しいプロジェクトの作成を要求した場合、\\\`workspace\\\` フィールドで新しいワークスペース名を指定できます。
-指定されたフォルダが存在しない場合、\\\`workspaceParentDirs\\\` のいずれかの配下に自動作成されます。
+When a user requests creating a new project, specify the new workspace name in the \\\`workspace\\\` field.
+If the folder does not exist, it is automatically created under one of the configured \\\`workspaceParentDirs\\\`.
 
-## IPC レスポンス
+## IPC Response Communication
 
-AntiCrow はファイルベースの通信でタスクの完了を検知します。
+AntiCrow detects task completion via file-based IPC communication.
 
-### 完了条件
+### Completion Requirement
 
-**\\\`response_path\\\` に指定されたファイルに write_to_file で書き込むこと**が完了条件です。
-書き込まないと、タスクは永遠に「実行中」のままになります。
+**Writing to the file specified by \\\`response_path\\\` using write_to_file** is the completion condition.
+Without this write, the task remains marked as "running" indefinitely.
 
-- \\\`task: "execution"\\\` → Markdown 形式で \\\`response_path\\\` に書き込む
-- \\\`task: "plan_generation"\\\` → JSON 形式で \\\`response_path\\\` に書き込む
+- \\\`task: "execution"\\\` → Write Markdown content to \\\`response_path\\\`
+- \\\`task: "plan_generation"\\\` → Write JSON content to \\\`response_path\\\`
 
-### VSIX デプロイ時の注意
+### VSIX Deployment Ordering
 
-VSIX インストールで拡張ホストが再起動すると通信が中断します。
-**必ずレスポンスファイルへの書き込みを VSIX インストールの前に行うこと。**
+When a task involves deploying a VSIX extension, follow this strict sequence:
+1. Complete all source code modifications
+2. Build: \\\`npm run compile\\\` → \\\`npm run bundle\\\` → \\\`npx vsce package\\\`
+3. **Write the response to \\\`response_path\\\`** (crucial)
+4. **Only afterwards** run \\\`antigravity --install-extension\\\`
+5. Reversing this order will cause the extension host to restart before the response is delivered, losing the response.
 
-### エラー時の自動リトライ
+### Automatic Error Recovery
 
-通信が中断した場合（例: 拡張ホスト再起動）、AntiCrow は自動で以下のリトライを試みます:
-1. 5秒待機（拡張ホストの再起動完了を待つ）
-2. 既に書き込み済みのレスポンスファイルを検索・回収
-3. 回収できなかった場合、新しい接続で120秒間再待機
+If communication is interrupted, AntiCrow automatically executes recovery:
+1. Waits 5 seconds for the extension host to reload
+2. Scans and recovers existing response files
+3. If not found, waits up to 120 seconds on a re-established connection
 
-リトライが成功した場合、レポートに \\\`retried: true\\\` が記録されます。
+Successful recovery is recorded with \\\`retried: true\\\` in the task report.
 
-## 進捗報告
+## Progress Reporting
 
-処理中は \\\`progress_path\\\` に JSON で進捗を定期的に書き込んでください。
-Discord にリアルタイム通知されます。
+Periodically write JSON progress updates to \\\`progress_path\\\` during task execution.
+These updates are forwarded to Discord in real time.
 
 \\\`\\\`\\\`json
-{"status": "実装中", "detail": "auth.ts を修正中", "percent": 50}
+{"status": "in_progress", "detail": "Refactoring auth.ts", "percent": 50}
 \\\`\\\`\\\`
 
-**頻度:** 30秒〜1分おきに更新する。長時間の無反応はユーザーに不安を与えます。
+**Interval:** Update every 30 to 60 seconds. Prolonged silence causes user uncertainty.
 
-## Discord へのファイル送信
+## Sending Files to Discord
 
-レスポンスにファイルを添付したい場合、以下のタグを使います:
+Embed file attachments in your response using the following tag:
 
 \\\`\\\`\\\`
 <!-- FILE:C:/path/to/file.png -->
 \\\`\\\`\\\`
 
-対応フォーマット: png, jpg, gif, webp, mp4, webm, pdf, txt, csv, json, md, zip
+Supported formats: png, jpg, gif, webp, mp4, webm, pdf, txt, csv, json, md, zip.
 
-**制限:** 25MB 以上のファイルは送信されません（Discord の制限）。
+**Limit:** Files exceeding 25MB will not be uploaded (Discord limit).
 
-## 記憶の記録
+## Storing Memories
 
-重要な学びや教訓があれば、レスポンス末尾に以下のタグを埋め込んでください:
-
-\\\`\\\`\\\`
-<!-- MEMORY:global: 全プロジェクト共通の学び -->
-<!-- MEMORY:workspace: 現プロジェクト固有の学び -->
-\\\`\\\`\\\`
-
-## 提案ボタン
-
-レスポンス末尾に以下のタグを埋め込むと、Discord に次アクションの提案ボタンが表示されます:
+Record key learnings or project context by appending memory tags to your response:
 
 \\\`\\\`\\\`
-<!-- SUGGESTIONS:[{"label":"ボタンテキスト","description":"説明","prompt":"実行プロンプト"}] -->
+<!-- MEMORY:global: Cross-project learning or convention -->
+<!-- MEMORY:workspace: Workspace-specific architectural decision -->
 \\\`\\\`\\\`
 
-最大3つの提案 + 固定の「エージェントに任せる」ボタンが表示されます。
+## Action Suggestion Buttons
 
-## ベストプラクティス
+Append suggestion tags to your response to render interactive next-action buttons in Discord:
 
-### チームモードの効果的な使い方
+\\\`\\\`\\\`
+<!-- SUGGESTIONS:[{"label":"Button Label","description":"Brief description","prompt":"Execution prompt"}] -->
+\\\`\\\`\\\`
 
-- **タスクは具体的に**: 「テストを書く」ではなく「src/__tests__/auth.test.ts にログイン/ログアウトのユニットテストを追加する」
-- **依存関係を避ける**: タスク A の結果をタスク B が必要とする場合、チームモードは不適切
-- **ファイル競合を防ぐ**: 各タスクが触るファイルを事前に明確にし、重複があればタスクを統合する
-- **デプロイは最後に**: コード変更タスクを全て完了してから、メインエージェントがまとめてデプロイ
+Up to 3 suggestions are displayed, alongside a built-in "Let Agent Decide" button.
 
-### レスポンスの品質
+## Best Practice Guidelines
 
-- **詳細に書く**: 何をしたか・変更ファイル・影響範囲・テスト結果を必ず含める
-- **簡素すぎる報告は禁止**: 「完了しました」だけでは不十分
-- **提案を活用**: 次ステップの提案ボタン（SUGGESTIONS）を積極的に使い、ユーザーの操作を簡単にする
+### Effective Team Mode Usage
 
-## 制約事項
+- **Be specific**: Prefer "Add login/logout unit tests in src/__tests__/auth.test.ts" over "Write tests"
+- **Avoid dependencies**: If Task B depends on the output of Task A, team mode is not suitable
+- **Prevent file conflicts**: Clearly define file boundaries beforehand, and merge tasks if conflicts overlap
+- **Deploy last**: Complete all code modifications before the main agent deploys
 
-### ファイルサイズ
+### Response Quality
 
-- **Discord 添付ファイル**: 25MB 以下
-- **レスポンス**: Discord のメッセージ長制限（2,000文字）を超える場合は自動分割される
+- **Be comprehensive**: Always detail what was done, modified files, affected scope, and test verification
+- **Avoid minimal reports**: A single "Done" is never sufficient
+- **Leverage suggestions**: Use \\\`SUGGESTIONS\\\` tags to streamline subsequent steps for the user
 
-### デプロイ順序
+## Constraints
 
-VSIX デプロイを含むタスクでは以下の順序を厳守:
-1. コード変更を完了する
-2. \\\`npm run compile\\\` → \\\`npm run bundle\\\` → \\\`npx vsce package\\\`
-3. **レスポンスファイルに書き込む**（最重要）
-4. **その後に** \\\`antigravity --install-extension\\\` を実行
-5. 順序を間違えると拡張ホスト再起動で通信が中断し、レスポンスが消失する
+- **Discord file attachments**: 25MB maximum
+- **Response length**: Messages exceeding Discord's 2,000 character limit are split automatically
 
-## トラブルシューティング
+## Troubleshooting
 
-### レスポンスが Discord に届かない
+### Response does not reach Discord
+- **Cause**: Response was not written to \\\`response_path\\\`, or was written after VSIX installation.
+- **Remedy**: Verify output was written in the correct format (Markdown for execution, JSON for plan generation).
 
-- **原因**: レスポンスファイルへの書き込みが完了していない、または VSIX インストール後に書き込んだ
-- **対処**: \\\`response_path\\\` に正しい形式（execution → Markdown, plan_generation → JSON）で書き込まれているか確認する
-- **注意**: AntiCrow は自動で未配達レスポンスを定期的にスキャンし再配信する（5分間隔）
+### Progress not reflected in Discord
+- **Cause**: Invalid JSON format in \\\`progress_path\\\`.
+- **Remedy**: Follow \\\`{"status": "...", "detail": "...", "percent": N}\\\` format strictly without trailing commas or comments.
 
-### 進捗が Discord に反映されない
+## Discord Slash Commands
 
-- **原因**: \\\`progress_path\\\` の JSON フォーマットが不正
-- **対処**: \\\`{"status": "...", "detail": "...", "percent": N}\\\` の形式を厳守する。余計なフィールドやコメントは不可
+- \\\`/status\\\` — Display Bot and workspace connection status
+- \\\`/stop\\\` — Cancel current running task
+- \\\`/newchat\\\` — Start a fresh chat session
+- \\\`/workspace\\\` — List or switch workspaces
+- \\\`/queue\\\` — Show message queue status
+- \\\`/model\\\` — Switch AI models
+- \\\`/mode\\\` — Switch agent modes
+- \\\`/templates\\\` — List, run, or delete prompt templates
+- \\\`/schedules\\\` — List and manage schedules
+- \\\`/auto\\\` — Start continuous auto mode
+- \\\`/team\\\` — Manage team mode and subagents
+- \\\`/suggest\\\` — Redisplay the most recent suggestion buttons
+- \\\`/screenshot\\\` — Capture Antigravity screen
+- \\\`/soul\\\` — Review or reset customisation settings
+- \\\`/help\\\` — Display help and command directory
 
-### チームモードでサブエージェントのレスポンスが消える
-
-- **原因**: サブエージェントが VSIX インストールを実行し、拡張ホストが再起動した
-- **対処**: VSIX インストールはメインエージェントのみが行う。サブエージェントは VSIX ファイル作成まで
-
-## Discord スラッシュコマンド一覧
-
-- \\\`/status\\\` — Bot・ワークスペースの接続状態を表示
-- \\\`/stop\\\` — 実行中のタスクをキャンセル
-- \\\`/newchat\\\` — 新しいチャットセッションを開始
-- \\\`/workspace\\\` — ワークスペースの一覧・切替
-- \\\`/queue\\\` — メッセージキューの状態を表示
-- \\\`/model\\\` — AI モデルの切替
-- \\\`/mode\\\` — エージェントモードの切替
-- \\\`/templates\\\` — テンプレートの一覧・実行・削除
-- \\\`/schedules\\\` — スケジュールの一覧・管理
-- \\\`/auto\\\` — 連続オートモードの開始（設定オプション付き）
-- \\\`/team\\\` — チームモード・サブエージェント管理
-- \\\`/suggest\\\` — 直前の提案ボタンを再表示
-- \\\`/screenshot\\\` — Antigravity の画面キャプチャを取得
-- \\\`/soul\\\` — カスタマイズ設定の確認・リセット
-- \\\`/help\\\` — ヘルプ・コマンド一覧を表示
-
-## ワークスペース構造
+## Workspace Structure
 
 \\\`\\\`\\\`
 {workspace}/
 ├── .anticrow/
-│   ├── team.json      # チームモード設定（enabled, maxAgents, enableWindowReuse 等）
-│   ├── MEMORY.md      # ワークスペース固有の記憶
-│   └── worktrees/     # サブエージェント用 git worktree
+│   ├── team.json      # Team mode configuration (enabled, maxAgents, enableWindowReuse, etc.)
+│   ├── MEMORY.md      # Workspace-specific memories
+│   └── worktrees/     # Subagent git worktrees
 ├── .agent/
 │   └── skills/
 │       └── anticrow/
-│           └── SKILL.md  # このファイル（自動配置）
+│           └── SKILL.md  # This skill file (automatically deployed)
 ~/.anticrow/
-├── SOUL.md            # カスタマイズ設定（口調・呼び方）
-├── SOUL.md.bak        # カスタマイズのバックアップ
-└── MEMORY.md          # グローバル記憶
-\\\`\\\`\\\`
+├── SOUL.md            # Customisation settings (tone, address)
+├── SOUL.md.bak        # Backup of customisation
+└── MEMORY.md          # Global memory
+\`\`\`
 `;
 
 /**

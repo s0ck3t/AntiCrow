@@ -10,7 +10,7 @@
 
 import { CdpBridge, DiscoveredInstance } from './cdpBridge';
 import { getCdpPorts, resolveWorkspacePaths } from './configHelper';
-import { logDebug, logError, logWarn } from './logger';
+import { logDebug, logError, logInfo, logWarn } from './logger';
 import { WorkspaceStore } from './workspaceStore';
 import { t } from './i18n';
 
@@ -192,6 +192,12 @@ export class CdpPool {
                 }
             }
 
+            // タイトル一致しない場合でも起動中インスタンスがあればフォールバック
+            if (!target && instances.length > 0) {
+                target = instances[0];
+                logInfo(`CdpPool: title match for "${workspaceName}" not found, falling back to active instance: "${target.title}" (id=${target.id})`);
+            }
+
             if (!target) {
                 // ワークスペースが見つからない → 自動学習データまたは手動設定からフォルダパスを取得
                 const wsPaths = resolveWorkspacePaths(this.workspaceStore);
@@ -240,6 +246,12 @@ export class CdpPool {
                             target = freshInstances.find(
                                 i => CdpBridge.extractWorkspaceName(i.title) === workspaceName,
                             );
+                            if (!target) {
+                                const lower = workspaceName.toLowerCase();
+                                target = freshInstances.find(
+                                    i => CdpBridge.extractWorkspaceName(i.title).toLowerCase() === lower,
+                                );
+                            }
                             pollCount++;
                             if (target) {
                                 logDebug(`CdpPool: auto-launched workspace "${workspaceName}" found (id=${target.id}) after ${pollCount} polls`);
@@ -293,6 +305,12 @@ export class CdpPool {
                                 target = freshInstances.find(
                                     i => CdpBridge.extractWorkspaceName(i.title) === workspaceName,
                                 );
+                                if (!target) {
+                                    const lower = workspaceName.toLowerCase();
+                                    target = freshInstances.find(
+                                        i => CdpBridge.extractWorkspaceName(i.title).toLowerCase() === lower,
+                                    );
+                                }
                                 pollCount++;
                                 if (target) {
                                     logDebug(`CdpPool: guessed-launch workspace "${workspaceName}" found (id=${target.id}) after ${pollCount} polls`);
@@ -319,6 +337,12 @@ export class CdpPool {
                                 target = freshInstances.find(
                                     i => CdpBridge.extractWorkspaceName(i.title) === workspaceName,
                                 );
+                                if (!target) {
+                                    const lower = workspaceName.toLowerCase();
+                                    target = freshInstances.find(
+                                        i => CdpBridge.extractWorkspaceName(i.title).toLowerCase() === lower,
+                                    );
+                                }
                                 pollCount++;
                                 if (target) {
                                     logDebug(`CdpPool: externally launched workspace "${workspaceName}" found (id=${target.id}) after ${pollCount} polls`);
@@ -342,6 +366,10 @@ export class CdpPool {
                         const finalInstances = await CdpBridge.discoverInstances(finalPorts);
                         discoveredCount = finalInstances.length;
                         discoveredNames = finalInstances.map(i => CdpBridge.extractWorkspaceName(i.title));
+                        if (finalInstances.length > 0) {
+                            target = finalInstances[0];
+                            logInfo(`CdpPool: title match for "${workspaceName}" not found after polling, falling back to active instance: "${target.title}" (id=${target.id})`);
+                        }
                     } catch (e) {
                         logDebug(`CdpPool: final discovery failed: ${e instanceof Error ? e.message : e}`);
                     }
@@ -518,7 +546,7 @@ export class CdpPool {
             if (parentDir && parentDir !== userProfile) {
                 dirs.push(parentDir);
             }
-            // ホームディレクトリ自体（例: C:\Users\ysk41）を追加
+            // ホームディレクトリ自体（例: C:\Users\username）を追加
             // → ホーム直下のサブフォルダを検知
             dirs.push(userProfile);
             // よくある開発ディレクトリ

@@ -572,9 +572,9 @@ export class TeamOrchestrator {
             if (groupTasks.length === 1) {
                 grouped.push(groupTasks[0]);
             } else {
-                // 複数タスクを1つにまとめる
+                // Combine multiple tasks into one
                 const combined = groupTasks
-                    .map((task, idx) => `## サブタスク${String.fromCharCode(65 + idx)}\n${task}`)
+                    .map((task, idx) => `## Subtask ${String.fromCharCode(65 + idx)}\n${task}`)
                     .join('\n\n');
                 grouped.push(combined);
             }
@@ -605,15 +605,16 @@ export class TeamOrchestrator {
 
         const normalize = (text: string): string => {
             return text
-                // 番号プレフィックス（1. / 1) / ① 等）を除去
+                // Remove number prefix (1. / 1) / ① etc.)
                 .replace(/^\s*(?:\d+[.\)）\]]|[①②③④⑤⑥⑦⑧⑨⑩])\s*/gm, '')
-                // ## サブタスクA 等のヘッダーを除去
-                .replace(/^##\s*サブタスク[A-Z]\s*/gm, '')
-                // ## 背景, ## タスク ヘッダーを除去
-                .replace(/^##\s*(?:背景|タスク)\s*/gm, '')
-                // 【サブエージェントタスク】等のプレフィックスを除去
+                // Remove ## Subtask A / ## サブタスクA headers
+                .replace(/^##\s*(?:サブタスク|Subtask)\s*[A-Z]?\s*/gmi, '')
+                // Remove ## Context / ## Task / ## 背景 headers
+                .replace(/^##\s*(?:背景|タスク|Context|Tasks?)\s*/gmi, '')
+                // Remove 【...】 prefixes
                 .replace(/【[^】]*】\s*/g, '')
-                // 連続する空白・改行を単一スペースに
+                .replace(/\[[^\]]*\]\s*/g, '')
+                // Collapse whitespace
                 .replace(/\s+/g, ' ')
                 .trim();
         };
@@ -673,7 +674,7 @@ export class TeamOrchestrator {
     private prependContext(tasks: string[], contextLines: string[]): string[] {
         if (contextLines.length === 0) { return tasks; }
         const context = contextLines.join('\n');
-        return tasks.map(task => `## 背景\n${context}\n\n## タスク\n${task}`);
+        return tasks.map(task => `## Context\n${context}\n\n## Task\n${task}`);
     }
 
     // -----------------------------------------------------------------------
@@ -698,11 +699,11 @@ export class TeamOrchestrator {
         logInfo(`[TeamOrchestrator] Parallel orchestration: ${tasks.length} tasks, max concurrent: ${maxConcurrent}`);
 
         await this.sendToDiscord(channelId,
-            `🚀 **${tasks.length}個のタスクを並行実行します**（最大同時: ${maxConcurrent}）`);
+            `🚀 **Executing ${tasks.length} task(s) in parallel** (Max concurrent: ${maxConcurrent})`);
 
         const allResults: OrchestrationResult[] = [];
 
-        // バッチ分割: maxConcurrent ずつ並行実行
+        // Batch execution: run maxConcurrent at a time
         for (let batchStart = 0; batchStart < tasks.length; batchStart += maxConcurrent) {
             const batch = tasks.slice(batchStart, batchStart + maxConcurrent);
             const batchNum = Math.floor(batchStart / maxConcurrent) + 1;
@@ -710,7 +711,7 @@ export class TeamOrchestrator {
 
             if (totalBatches > 1) {
                 await this.sendToDiscord(channelId,
-                    `📦 **バッチ ${batchNum}/${totalBatches}** を実行中（${batch.length}タスク）`);
+                    `📦 Running **Batch ${batchNum}/${totalBatches}** (${batch.length} task(s))`);
             }
 
             // 並行実行: Promise.allSettled で全タスクの完了を待つ
@@ -797,8 +798,8 @@ export class TeamOrchestrator {
                 totalAgents: tasks.length,
             };
 
-            // 共通ヘルパーで instruction.json を構築・書き出し
-            const taskPrompt = `⚠️ 以下はあなた専用のタスクです。他のサブエージェントのタスクは無視してください。\n\n${tasks[i]}`;
+            // Build and write instruction.json using shared helper
+            const taskPrompt = `⚠️ The following is your assigned task. Please ignore tasks assigned to other subagents.\n\n${tasks[i]}`;
             const fileContent = buildInstructionContent({
                 prompt: taskPrompt,
                 context: {
@@ -811,11 +812,11 @@ export class TeamOrchestrator {
                 },
                 progressPath,
                 executionRules: [
-                    'このタスクは既に計画済みです。計画の生成や承認は不要で、直ちに実行に移ってください',
-                    'plan_generation タスクを生成しないでください。実行（execution）のみを行ってください',
-                    '他のサブエージェントの担当範囲には手を出さないでください。あなたの担当範囲のみを実行すること',
-                    '同じファイルの同じ箇所を修正しないでください',
-                    'VSIX インストール（antigravity --install-extension）やデプロイコマンドは実行しないでください。ビルドとパッケージングまでが担当範囲です',
+                    'This task is already planned and approved. Proceed directly to execution without generating plans or asking for confirmation',
+                    'Do not generate plan_generation tasks. Perform execution only',
+                    'Do not touch files outside your assigned scope. Execute only within your assigned boundaries',
+                    'Do not modify the same lines of code in the same files as other subagents',
+                    'Do not run VSIX installation (antigravity --install-extension) or deployment commands. Your scope ends at build and package',
                 ],
             });
 
@@ -883,42 +884,36 @@ export class TeamOrchestrator {
         }
 
         await this.sendToDiscord(channelId,
-            `🚀 **チームモード**: ${instructions.length}個のサブエージェントを起動します`);
+            `🚀 **Team Mode**: Launching ${instructions.length} subagent(s)`);
 
-        // --- Phase 3: サブエージェント起動 & プロンプト送信 ---
+        // --- Phase 3: Launch subagents & send prompts ---
         const agentThreads = new Map<number, string>(); // agentIndex -> threadId
         const agentNames = new Map<number, string>();     // agentIndex -> agentName
         const teamRequestId = instructions[0]?.requestId ?? `${Date.now()}`;
 
-        // 個別のサブエージェント起動処理（1エージェント分）
+        // Individual subagent launch handler
         const spawnAgent = async (instruction: TeamInstruction): Promise<void> => {
             if (signal?.aborted) {
                 throw new Error('Team orchestration aborted');
             }
 
             try {
-                // ワークスペース名からリポジトリルートを解決
                 const wsRepoRoot = workspaceName ? this.resolveRepoRootForWorkspace(workspaceName) : undefined;
-
-                // サブエージェントを spawn
                 const handle = await this.subagentManager.spawn(undefined, workspaceName, wsRepoRoot, true, instruction.agentIndex);
                 agentNames.set(instruction.agentIndex, handle.name);
                 logInfo(`[TeamOrchestrator] Spawned agent ${handle.name} for task ${instruction.agentIndex}`);
 
-                // Discord スレッド作成（状況見える化用）
                 let threadId: string | null = null;
                 if (this.threadOps) {
                     const taskPreview = instruction.task.substring(0, 500) + (instruction.task.length > 500 ? '...' : '');
-                    // スレッド名は「サブエージェントN」
                     threadId = await this.threadOps.createThread(
                         channelId,
                         `${t('team.subagentLabel')}${instruction.agentIndex}`,
                     );
                     if (threadId) {
                         agentThreads.set(instruction.agentIndex, threadId);
-                        // 開始通知に作業内容を含める
                         await this.threadOps.sendToThread(threadId,
-                            `📋 **作業内容:**\n${taskPreview}`
+                            `📋 **Task Details:**\n${taskPreview}`
                         );
                     }
                 }
@@ -933,13 +928,13 @@ export class TeamOrchestrator {
                 // 元リポジトリのパスで作業するよう指示を追加
                 const wsRepoRootPath = wsRepoRoot || effectiveRepoRoot;
                 let subagentPrompt =
-                    `以下のファイルを view_file ツールで読み込み、その指示に従ってください。` +
-                    `ファイルパス: ${instructionPath}` +
+                    `Please read the following file using the view_file tool and follow its instructions.` +
+                    `File path: ${instructionPath}` +
                     `\n\n` +
-                    `※重要: ファイルの編集・作成・削除はすべてリポジトリパス ${wsRepoRootPath} に対して行ってください。` +
-                    `ファイルの読み取りもリポジトリパスで行ってください。`;
+                    `*Important: All file edits, creations, and deletions must be performed against the repository path ${wsRepoRootPath}.` +
+                    `Please also read files from the repository path.`;
 
-                // 共有タスクリストの参照指示を追加
+                // Add shared task list reference instructions
                 if (taskListPath) {
                     const statusDir = path.dirname(taskListPath);
                     const requestIdMatch = path.basename(taskListPath).match(/team_tasklist_(.+)\.json/);
@@ -947,43 +942,39 @@ export class TeamOrchestrator {
                     const agentStatusFile = path.join(statusDir, `team_status_${taskRequestId}_agent${instruction.agentIndex}.json`);
 
                     subagentPrompt += `\n\n` +
-                        `📋 共有タスクリスト: ${taskListPath}（読み取り専用）\n` +
-                        `このファイルにはチーム全体のタスク一覧が記載されています。\n` +
-                        `❗ このファイルは直接編集しないでください。代わりに以下の個別ステータスファイルを更新してください。\n` +
-                        `📄 自分のステータスファイル: ${agentStatusFile}\n` +
-                        `- 作業開始時: {"status": "in_progress", "startedAt": ${Date.now()}} を書き込んでください\n` +
-                        `- 作業完了時: {"status": "completed", "completedAt": ${Date.now()}} を書き込んでください\n` +
-                        `- 失敗時: {"status": "failed", "completedAt": ${Date.now()}} を書き込んでください\n`;
+                        `📋 Shared Task List: ${taskListPath} (Read-only)\n` +
+                        `This file lists all tasks for the entire team.\n` +
+                        `❗ Do not edit this file directly. Instead, update your individual status file below.\n` +
+                        `📄 Your status file: ${agentStatusFile}\n` +
+                        `- When starting work: write {"status": "in_progress", "startedAt": ${Date.now()}}\n` +
+                        `- When completing work: write {"status": "completed", "completedAt": ${Date.now()}}\n` +
+                        `- On failure: write {"status": "failed", "completedAt": ${Date.now()}}\n`;
 
                     if (config.enableHelperMode) {
                         subagentPrompt += `\n\n` +
-                            `🤝 **ヘルプモード（重要）**\n` +
-                            `自分のメインタスクが完了したら、以下の手順で他のタスクを手伝ってください:\n\n` +
-                            `1. 共有タスクリスト（${taskListPath}）を view_file ツールで読み込む\n` +
-                            `2. "status" が "pending" のタスクがあるか確認する\n` +
-                            `3. "pending" のタスクがあれば、そのタスクの "fullTask" フィールドの内容を実行する\n` +
-                            `4. 実行前に自分のステータスファイルに {"status": "helping", "helpingTask": N} を書き込む\n` +
-                            `5. **制約**: 他エージェントが作業中（"in_progress"）のファイルは絶対に上書きしないこと\n` +
-                            `6. **優先順位**: テスト作成 > ドキュメント更新 > コードレビュー > 未着手の関連作業\n` +
-                            `7. 全タスクが "completed" または "in_progress" なら、ヘルプ不要。作業を終了してよい\n`;
+                            `🤝 **Helper Mode (Important)**\n` +
+                            `Once your main task is complete, please help with other tasks using the following steps:\n\n` +
+                            `1. Read the shared task list (${taskListPath}) using the view_file tool\n` +
+                            `2. Check if any tasks have "status": "pending"\n` +
+                            `3. If a "pending" task exists, execute the instructions in its "fullTask" field\n` +
+                            `4. Before executing, write {"status": "helping", "helpingTask": N} to your status file\n` +
+                            `5. **Constraint**: Never overwrite files currently being worked on ("in_progress") by other agents\n` +
+                            `6. **Priority**: Writing tests > Updating docs > Code review > Unstarted related work\n` +
+                            `7. If all tasks are "completed" or "in_progress", no help is needed. You may finish your turn\n`;
                     }
                 }
 
                 await handle.sendPromptFireAndForget(subagentPrompt, teamRequestId);
 
-                // 起動通知は廃止 — 完了時に通知する
-
             } catch (e) {
                 const errMsg = e instanceof Error ? e.message : String(e);
                 logError(`[TeamOrchestrator] Failed to spawn/send agent ${instruction.agentIndex}: ${errMsg}`, e);
                 await this.sendToDiscord(channelId,
-                    `❌ ${t('team.subagentLabel')}${instruction.agentIndex} の起動に失敗しました: ${errMsg}`);
+                    `❌ Failed to launch ${t('team.subagentLabel')}${instruction.agentIndex}: ${errMsg}`);
             }
         };
 
-        // enableParallel 設定に基づいて並行/直列を切り替え
         if (config.enableParallel) {
-            // 並行起動: maxAgents ずつバッチ分割して Promise.allSettled で同時実行
             const maxConcurrent = config.maxAgents;
             logInfo(`[TeamOrchestrator] Parallel spawn enabled: ${instructions.length} agents, max concurrent: ${maxConcurrent}`);
 
@@ -998,10 +989,9 @@ export class TeamOrchestrator {
 
                 if (totalBatches > 1) {
                     await this.sendToDiscord(channelId,
-                        `📦 **バッチ ${batchNum}/${totalBatches}** を起動中（${batch.length}エージェント）`);
+                        `📦 Launching **Batch ${batchNum}/${totalBatches}** (${batch.length} agent(s))`);
                 }
 
-                // バッチ内は並行実行
                 await Promise.allSettled(batch.map(inst => spawnAgent(inst)));
             }
         } else {

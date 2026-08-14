@@ -28,14 +28,11 @@ describe('instructionBuilder', () => {
     // buildDatetimeStr
     // -----------------------------------------------------------------------
     describe('buildDatetimeStr', () => {
-        it('JST形式の日時文字列が返ること', () => {
+        it('日時文字列が返ること', () => {
             const result = buildDatetimeStr();
             expect(typeof result).toBe('string');
             expect(result.length).toBeGreaterThan(0);
-            // 日本語の形式で「年」「月」「日」が含まれること
-            expect(result).toMatch(/\d{4}年/);
-            expect(result).toMatch(/\d{1,2}月/);
-            expect(result).toMatch(/\d{1,2}日/);
+            expect(result).toMatch(/[A-Za-z]{3},\s+\d{2}\s+[A-Za-z]{3}\s+\d{4},\s+\d{2}:\d{2}/);
         });
     });
 
@@ -81,11 +78,11 @@ describe('instructionBuilder', () => {
             // progress が生成されること
             const progress = result.progress as Record<string, unknown>;
             expect(progress.path).toBe('/tmp/progress.json');
-            expect(progress.instruction).toContain('進捗');
+            expect(progress.instruction).toContain('progress');
             // デフォルト execution_rules
             const rules = result.execution_rules as string[];
             expect(rules.length).toBe(3);
-            expect(rules[0]).toContain('計画済み');
+            expect(rules[0]).toContain('planned');
             expect(rules[1]).toContain('plan_generation');
             expect(rules[2]).toContain('VSIX');
         });

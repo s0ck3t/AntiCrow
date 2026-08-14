@@ -180,9 +180,9 @@ describe('FileIpc.extractResult', () => {
             },
         });
         const result = FileIpc.extractResult(raw);
-        expect(result).toContain('📋 概要');
+        expect(result).toContain('📋 Summary:');
         expect(result).toContain('タスク完了しました。');
-        expect(result).toContain('📝 変更内容');
+        expect(result).toContain('📝 Changes:');
         expect(result).toContain('file1.ts');
         expect(result).toContain('file2.ts');
         expect(result).toContain('セクション1');
@@ -195,9 +195,9 @@ describe('FileIpc.extractResult', () => {
             deploy: { status: '完了', method: 'VSIX' },
         });
         const result = FileIpc.extractResult(raw);
-        expect(result).toContain('🧪 テスト結果');
+        expect(result).toContain('🧪 Test Results:');
         expect(result).toContain('96 passed');
-        expect(result).toContain('🚀 デプロイ');
+        expect(result).toContain('🚀 Deploy:');
         expect(result).toContain('VSIX');
     });
 });
@@ -212,9 +212,9 @@ describe('FileIpc.formatJsonForDiscord', () => {
         };
         const result = FileIpc.formatJsonForDiscord(obj);
         expect(result).not.toBeNull();
-        expect(result).toContain('📋 概要');
+        expect(result).toContain('📋 Summary:');
         expect(result).toContain('変更完了');
-        expect(result).toContain('📝 変更内容');
+        expect(result).toContain('📝 Changes:');
         expect(result).toContain('a.ts');
     });
 
@@ -225,7 +225,7 @@ describe('FileIpc.formatJsonForDiscord', () => {
     it('should handle flat string-only objects', () => {
         const obj = { status: '完了', message: 'OK' };
         const result = FileIpc.formatJsonForDiscord(obj);
-        expect(result).toContain('ステータス');
+        expect(result).toContain('Status:');
         expect(result).toContain('完了');
     });
 

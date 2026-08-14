@@ -178,13 +178,13 @@ export function buildPlanPrompt(
                 promptObj.team_mode = {
                     enabled: true,
                     max_agents: teamConfig.maxAgents,
-                    instruction: `チームモードが有効です（最大${teamConfig.maxAgents}エージェント並列）。` +
-                        `タスクを独立した複数のサブタスクに分割して \`tasks\` 配列に記述してください。` +
-                        `各タスクは並列実行されるため、同じファイルを複数タスクで修正しないこと。` +
-                        `3ファイル以上にまたがる変更は積極的に分割してください。` +
-                        `ただし、軽量タスク（単一ファイル修正・質問回答・型チェックのみ等）は tasks を省略してください。` +
-                        `重要: tasks の各要素は10文字以上の具体的な作業記述（何をどうするか）を含むこと。` +
-                        `番号のみ（\"1\", \"2\" 等）や選択肢の番号だけを tasks に入れてはならない。`,
+                    instruction: `Team mode is enabled (up to ${teamConfig.maxAgents} subagents in parallel). ` +
+                        `Decompose the task into independent subtasks and specify them in the \`tasks\` array. ` +
+                        `Subtasks run concurrently, so avoid editing the same files across multiple subtasks. ` +
+                        `Proactively split modifications spanning 3 or more files. ` +
+                        `For lightweight tasks (single-file edits, answering queries, type checking only), omit \`tasks\`. ` +
+                        `Important: Each entry in \`tasks\` must be a detailed, actionable description of what to do (at least 10 characters). ` +
+                        `Do not place bare numbers (e.g. "1", "2") in \`tasks\`.`,
                 };
                 logDebug(`promptBuilder: team_mode injected (maxAgents=${teamConfig.maxAgents})`);
             }

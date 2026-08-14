@@ -8,7 +8,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { logDebug, logWarn, logError } from './logger';
 import { SubagentPrompt, SubagentResponse } from './subagentTypes';
-import { watchPrompts, writeResponse, validateIpcPath } from './subagentIpc';
+import {
+    watchPrompts,
+    writeResponse,
+    validateIpcPath,
+    writeReady,
+    writeHeartbeat,
+    cleanupAgentIpc,
+} from './subagentIpc';
 
 /**
  * サブエージェント側で動作するプロンプト受信クラス。
@@ -17,13 +24,22 @@ import { watchPrompts, writeResponse, validateIpcPath } from './subagentIpc';
  */
 export class SubagentReceiver {
     private stopWatcher: (() => void) | null = null;
+    private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     private myName: string;
     private ipcDir: string;
     private handler: ((prompt: string) => Promise<string>) | null = null;
 
     constructor(myName: string, ipcDir: string) {
-        this.myName = myName;
+        this.myName = SubagentReceiver.normalizeAgentName(myName);
         this.ipcDir = ipcDir;
+    }
+
+    /**
+     * サブエージェント名を正規化する。
+     * (Workspace) / (ワークスペース) サフィックスの除去など。
+     */
+    static normalizeAgentName(name: string): string {
+        return (name || '').replace(/\s*\((?:Workspace|ワークスペース)\)\s*$/i, '').trim();
     }
 
     /**
@@ -32,6 +48,26 @@ export class SubagentReceiver {
      */
     setHandler(handler: (prompt: string) => Promise<string>): void {
         this.handler = handler;
+        // ハンドラ設定完了時に ready 状態を更新
+        this.emitReady();
+    }
+
+    /**
+     * 準備完了シグナルを IPC ディレクトリに書き込む。
+     */
+    private emitReady(): void {
+        try {
+            writeReady(this.ipcDir, {
+                type: 'subagent_ready',
+                name: this.myName,
+                timestamp: Date.now(),
+                pid: typeof process !== 'undefined' ? process.pid : undefined,
+            });
+            writeHeartbeat(this.ipcDir, this.myName);
+            logDebug(`[SubagentReceiver] 準備完了シグナル送出: "${this.myName}"`);
+        } catch (err) {
+            logWarn(`[SubagentReceiver] 準備完了シグナル送出失敗: ${err}`);
+        }
     }
 
     /**
@@ -45,6 +81,16 @@ export class SubagentReceiver {
 
         logDebug(`[SubagentReceiver] 監視開始: myName="${this.myName}"`);
 
+        // 準備完了通知を送信
+        this.emitReady();
+
+        // 定期ハートビート開始（5秒間隔）
+        if (!this.heartbeatTimer) {
+            this.heartbeatTimer = setInterval(() => {
+                writeHeartbeat(this.ipcDir, this.myName);
+            }, 5000);
+        }
+
         this.stopWatcher = watchPrompts(
             this.ipcDir,
             this.myName,
@@ -56,6 +102,14 @@ export class SubagentReceiver {
      * プロンプト監視を停止する。
      */
     stop(): void {
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
+        }
+
+        // IPC 準備完了/ハートビートファイルをクリーンアップ
+        cleanupAgentIpc(this.ipcDir, this.myName);
+
         if (this.stopWatcher) {
             this.stopWatcher();
             this.stopWatcher = null;
@@ -68,7 +122,8 @@ export class SubagentReceiver {
      * ワークスペース名に "-subagent-" が含まれていればサブエージェント。
      */
     static isSubagent(workspaceName: string): boolean {
-        return workspaceName.includes('-subagent-');
+        const clean = SubagentReceiver.normalizeAgentName(workspaceName);
+        return clean.includes('-subagent-');
     }
 
     // -----------------------------------------------------------------------
@@ -85,9 +140,9 @@ export class SubagentReceiver {
         let response: SubagentResponse;
 
         try {
-            // ハンドラ未設定の場合、startBridge 完了を待機（最大30秒）
+            // If handler is not set, wait for startBridge to complete (max 30s)
             if (!this.handler) {
-                logWarn(`[SubagentReceiver] ⚠️ ハンドラ未設定 — startBridge 完了を待機中 (最大30秒)...`);
+                logWarn(`[SubagentReceiver] ⚠️ Handler not set — waiting for startBridge (max 30s)...`);
                 const maxWaitMs = 30_000;
                 const pollMs = 1_000;
                 const waitStart = Date.now();
@@ -95,9 +150,9 @@ export class SubagentReceiver {
                     await new Promise(r => setTimeout(r, pollMs));
                 }
                 if (!this.handler) {
-                    throw new Error(`ハンドラが${maxWaitMs / 1000}秒待機後も設定されていません。startBridge が完了していない可能性があります。`);
+                    throw new Error(`Handler not set after waiting ${maxWaitMs / 1000}s. startBridge may not have finished.`);
                 }
-                logDebug(`[SubagentReceiver] ✅ ハンドラ設定を確認 (${Date.now() - waitStart}ms 待機)`);
+                logDebug(`[SubagentReceiver] ✅ Handler configured (${Date.now() - waitStart}ms wait)`);
             }
 
             logDebug(`[SubagentReceiver] ハンドラ呼び出し開始...`);

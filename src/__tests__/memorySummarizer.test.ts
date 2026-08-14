@@ -96,7 +96,7 @@ describe('memorySummarizer', () => {
             const recentEntries = ['### 2026-02-20\nエントリ1\n', '### 2026-02-21\nエントリ2\n'];
             const result = rebuildMemoryContent(header, summary, recentEntries);
             expect(result).toContain('# Header');
-            expect(result).toContain('## 過去の記憶（要約）');
+            expect(result).toContain('## Past Memories (Summary)');
             expect(result).toContain('- 要約1');
             expect(result).toContain('### 2026-02-20');
             expect(result).toContain('### 2026-02-21');
@@ -105,7 +105,7 @@ describe('memorySummarizer', () => {
         it('エントリが空でも正しく動作する', () => {
             const result = rebuildMemoryContent('# H', '要約', []);
             expect(result).toContain('# H');
-            expect(result).toContain('## 過去の記憶（要約）');
+            expect(result).toContain('## Past Memories (Summary)');
             expect(result).toContain('要約');
         });
     });
@@ -155,7 +155,7 @@ describe('memorySummarizer', () => {
             expect(writtenContent).toBeDefined();
             if (writtenContent) {
                 const written = writtenContent[1] as string;
-                expect(written).toContain('## 過去の記憶（要約）');
+                expect(written).toContain('## Past Memories (Summary)');
                 expect(written).toContain('- 要約された内容');
                 // 直近5件は保持されること
                 expect(written).toContain('### 2026-02-14');

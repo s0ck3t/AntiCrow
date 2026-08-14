@@ -1,8 +1,6 @@
-// ---------------------------------------------------------------------------
-// logger.ts — OutputChannel ロガー + ログレベルフィルタリング
-// ---------------------------------------------------------------------------
-
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /** ログレベル定義（数値が大きいほど重要） */
 export enum LogLevel {
@@ -13,12 +11,19 @@ export enum LogLevel {
 }
 
 let channel: vscode.OutputChannel | undefined;
-let currentLevel: LogLevel = LogLevel.INFO;
+let currentLevel: LogLevel = LogLevel.DEBUG;
+let logFilePath: string | undefined;
 
 /** OutputChannel を初期化して返す。既に作成済みならそのまま返す。 */
-export function initLogger(): vscode.OutputChannel {
+export function initLogger(storagePath?: string): vscode.OutputChannel {
     if (!channel) {
         channel = vscode.window.createOutputChannel('AntiCrow');
+    }
+    if (storagePath) {
+        try {
+            fs.mkdirSync(storagePath, { recursive: true });
+            logFilePath = path.join(storagePath, 'anticrow.log');
+        } catch { /* ignore */ }
     }
     return channel;
 }
@@ -38,28 +43,37 @@ function ts(): string {
     return new Date().toISOString();
 }
 
+function writeLog(line: string): void {
+    channel?.appendLine(line);
+    if (logFilePath) {
+        try {
+            fs.appendFileSync(logFilePath, line + '\n');
+        } catch { /* ignore */ }
+    }
+}
+
 /** INFO レベルのログを出力する */
 export function logInfo(msg: string): void {
     if (currentLevel > LogLevel.INFO) { return; }
-    channel?.appendLine(`[INFO  ${ts()}] ${msg}`);
+    writeLog(`[INFO  ${ts()}] ${msg}`);
 }
 
 /** WARN レベルの警告ログを出力する */
 export function logWarn(msg: string): void {
     if (currentLevel > LogLevel.WARN) { return; }
-    channel?.appendLine(`[WARN  ${ts()}] ${msg}`);
+    writeLog(`[WARN  ${ts()}] ${msg}`);
 }
 
 /** ERROR レベルのエラーログを出力する。err が Error の場合はメッセージも付与する。常に出力される。 */
 export function logError(msg: string, err?: unknown): void {
     const detail = err instanceof Error ? ` | ${err.message}` : '';
-    channel?.appendLine(`[ERROR ${ts()}] ${msg}${detail}`);
+    writeLog(`[ERROR ${ts()}] ${msg}${detail}`);
 }
 
 /** DEBUG レベルの詳細ログを出力する */
 export function logDebug(msg: string): void {
     if (currentLevel > LogLevel.DEBUG) { return; }
-    channel?.appendLine(`[DEBUG ${ts()}] ${msg}`);
+    writeLog(`[DEBUG ${ts()}] ${msg}`);
 }
 
 /** OutputChannel を破棄してリソースを解放する */

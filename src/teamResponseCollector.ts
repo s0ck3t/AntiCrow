@@ -156,24 +156,24 @@ export async function collectResponses(
             const durationMs = Date.now() - startTime;
             deps.stopMonitor(agentName);
 
-            const retryTag = retriedSuccessfully ? '（リトライで回復）' : '';
+            const retryTag = retriedSuccessfully ? ' (recovered via retry)' : '';
             logInfo(`[TeamResponseCollector] Agent ${instruction.agentIndex} (${agentName}) completed in ${durationMs}ms${retryTag}`);
 
-            // スレッドに完了通知
+            // Send completion to thread
             if (threadId && deps.threadOps) {
                 await deps.threadOps.sendToThread(threadId,
                     retriedSuccessfully
-                        ? `🔄 **${t('team.taskCompleted')}**（IPC中断→リトライで回復）`
+                        ? `🔄 **${t('team.taskCompleted')}** (IPC interrupted → recovered via retry)`
                         : `✅ **${t('team.taskCompleted')}**`);
             }
 
-            // メインチャンネルに完了通知（スレッドリンク + N/M 表記付き）
+            // Send completion to main channel
             completedCount++;
             if (threadId) {
                 await deps.sendToDiscord(channelId,
                     retriedSuccessfully
-                        ? `🔄 ${completedCount}/${instructions.length} リトライで回復しました <#${threadId}>`
-                        : `✅ ${completedCount}/${instructions.length} 完了しました <#${threadId}>`);
+                        ? `🔄 ${completedCount}/${instructions.length} recovered via retry <#${threadId}>`
+                        : `✅ ${completedCount}/${instructions.length} completed <#${threadId}>`);
             }
 
             // 完了済みとしてマーク
@@ -215,17 +215,16 @@ export async function collectResponses(
                                     String(targetInstruction.agentIndex),
                                     targetInstruction.task
                                 );
-                                // タスクリスト参照を含める
+                                // Include task list reference
                                 if (taskListPath) {
-                                    followupPrompt += `\n\n📋 共有タスクリスト: ${taskListPath}\n` +
-                                        `他エージェントが作業中のファイルは上書きしないでください。` +
-                                        `テスト作成・ドキュメント更新・コードレビュー・未着手の関連作業を優先してください。`;
+                                    followupPrompt += `\n\n📋 Shared Task List: ${taskListPath}\n` +
+                                        `Do not overwrite files currently being worked on by other agents.` +
+                                        `Prioritise test creation, documentation updates, code review, or unstarted related work.`;
                                 }
-                                // sendPromptFireAndForget を使用（sendPrompt はレスポンス待機でブロックするため）
                                 await handle.sendPromptFireAndForget(followupPrompt, teamRequestId);
-                                logInfo(`[TeamResponseCollector] ヘルパープロンプト送信完了: ${agentName} -> タスク${targetInstruction.agentIndex}`);
+                                logInfo(`[TeamResponseCollector] Helper prompt sent: ${agentName} -> Task ${targetInstruction.agentIndex}`);
                             } catch (helperErr) {
-                                logWarn(`[TeamResponseCollector] ヘルパープロンプト送信失敗: ${helperErr}`);
+                                logWarn(`[TeamResponseCollector] Failed to send helper prompt: ${helperErr}`);
                             }
                         }
                     }
@@ -246,38 +245,38 @@ export async function collectResponses(
             const errMsg = e instanceof Error ? e.message : String(e);
             deps.stopMonitor(agentName);
 
-            // IPC中断フォールバック: 進捗ファイルから部分完了情報を復元
+            // IPC interruption fallback: restore partial completion from progress file
             let partialSuccess = false;
             try {
                 const progressContent = await deps.fileIpc.readProgress(instruction.progress_path);
                 if (progressContent && typeof progressContent.percent === 'number' && progressContent.percent >= 50) {
                     partialSuccess = true;
                     logWarn(`[TeamResponseCollector] Agent ${instruction.agentIndex} (${agentName}) IPC interrupted but progress was ${progressContent.percent}%. Treating as partial success.`);
-                    // メインチャンネルに通知
+                    // Notify main channel
                     await deps.sendToDiscord(channelId,
-                        `⚠️ ${t('team.subagentLabel')}${instruction.agentIndex} の IPC 通信が中断しました（進捗: ${progressContent.percent}%）。部分完了として処理します。`);
+                        `⚠️ ${t('team.subagentLabel')}${instruction.agentIndex} IPC connection interrupted (Progress: ${progressContent.percent}%). Recorded as partial completion.`);
                 }
-            } catch { /* 進捗読み取り失敗 — 通常のエラーとして処理 */ }
+            } catch { /* Progress read failed — treat as normal error */ }
 
             logError(`[TeamResponseCollector] Agent ${instruction.agentIndex} (${agentName}) failed: ${errMsg}`, e);
 
-            // スレッドにエラー通知
+            // Send error to thread
             if (threadId && deps.threadOps) {
                 await deps.threadOps.sendToThread(threadId,
                     partialSuccess
-                        ? `⚠️ **IPC中断** (${Math.round(durationMs / 1000)}秒) — 部分完了として記録`
-                        : `❌ **エラー発生** (${Math.round(durationMs / 1000)}秒)\n${errMsg}`
+                        ? `⚠️ **IPC Interrupted** (${Math.round(durationMs / 1000)}s) — Recorded as partial completion`
+                        : `❌ **Error Occurred** (${Math.round(durationMs / 1000)}s)\n${errMsg}`
                 ).catch(() => { });
             }
 
-            // エラーでも完了としてマーク（ヘルパーの対象にしない）
+            // Mark completed even on error (prevent helper loops)
             completedAgentIndices.add(instruction.agentIndex);
 
             return {
                 agentName,
                 success: partialSuccess,
                 response: partialSuccess
-                    ? `[IPC中断・部分完了] ${errMsg}`
+                    ? `[IPC Interrupted - Partial Completion] ${errMsg}`
                     : errMsg,
                 durationMs,
                 threadId: threadId ?? undefined,
@@ -315,14 +314,14 @@ export async function collectResponses(
         }
     }
 
-    // メインチャンネルに進捗サマリー
+    // Main channel progress summary
     const successCount = results.filter(r => r.success).length;
     await deps.sendToDiscord(channelId,
-        `📊 **全サブエージェント完了**: ${successCount}/${results.length} 成功`);
+        `📊 **All Subagents Complete**: ${successCount}/${results.length} succeeded`);
 
-    // 待機インジケーター: メインエージェントが結果を統合するまでの待ち時間をカバー
+    // Consolidation indicator
     await deps.sendToDiscord(channelId,
-        `⏳ メインエージェントが結果を統合中です...しばらくお待ちください`);
+        `⏳ Main agent is consolidating results... Please wait.`);
 
     return results;
 }

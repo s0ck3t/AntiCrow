@@ -96,9 +96,9 @@ export async function handleScheduleButton(
 
             if (plan.channel_id && ctx.bot) {
                 const baseName = plan.human_summary || planId;
-                if (!baseName.endsWith('（停止中）')) {
+                if (!baseName.endsWith(' (Paused)') && !baseName.endsWith('（停止中）')) {
                     renameChannelId = plan.channel_id;
-                    renameNewName = baseName + '（停止中）';
+                    renameNewName = baseName + ' (Paused)';
                 }
             }
         } else if (plan.status === 'paused') {
@@ -108,7 +108,7 @@ export async function handleScheduleButton(
             logDebug(`ButtonHandler: resumed plan ${planId}`);
 
             if (plan.channel_id && ctx.bot) {
-                const baseName = (plan.human_summary || planId).replace(/（停止中）$/, '');
+                const baseName = (plan.human_summary || planId).replace(/(?: \(Paused\)|（停止中）)$/, '');
                 renameChannelId = plan.channel_id;
                 renameNewName = baseName;
             }
