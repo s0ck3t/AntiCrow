@@ -350,7 +350,7 @@ export async function startAutoMode(
     if (prevState?.active) {
         const prevDuration = Date.now() - prevState.startedAt;
         logWarn(`autoMode: already active for wsKey=${wsKey}, silently resetting previous session (steps=${prevState.currentStep}, duration=${formatDuration(prevDuration)})`);
-        cancelPlanGeneration();
+        cancelPlanGeneration(wsKey);
         stateMap.delete(wsKey);
         pauseResolveMap.delete(wsKey);
         confirmResolveMap.delete(wsKey);
@@ -516,7 +516,7 @@ export async function stopAutoMode(
             logDebug(`autoMode: stopAutoMode called but no state for wsKey=${wsKey}`);
             return;
         }
-        cancelPlanGeneration();
+        cancelPlanGeneration(wsKey);
         // クリーンアップコールバックを実行（ウィンドウ再利用の無効化等）
         if (state.onCleanup) {
             try { state.onCleanup(); } catch (e) {
@@ -582,7 +582,7 @@ export function cleanupAutoModeState(wsKey?: string): void {
         pauseResolveMap.clear();
         confirmResolveMap.clear();
     }
-    cancelPlanGeneration();
+    cancelPlanGeneration(wsKey);
     logWarn(`autoMode: session state forcefully cleaned up (wsKey=${wsKey ?? 'all'})`);
 }
 

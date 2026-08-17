@@ -48,6 +48,7 @@ export async function collectResponses(
     teamRequestId: string,
     pollTaskListStatus: (taskListPath: string, channelId: string, signal: AbortSignal) => Promise<void>,
     signal?: AbortSignal,
+    failedSpawns?: Map<number, string>,
 ): Promise<OrchestrationResult[]> {
     const results: OrchestrationResult[] = [];
     const ipcDir = deps.fileIpc.getIpcDir();
@@ -71,6 +72,26 @@ export async function collectResponses(
         const agentName = agentNames.get(instruction.agentIndex) || `agent-${instruction.agentIndex}`;
         const threadId = agentThreads.get(instruction.agentIndex);
         const startTime = Date.now();
+
+        // 起動時に失敗したサブエージェントは即座に失敗として処理（タイムアウト待機を回避）
+        if (failedSpawns?.has(instruction.agentIndex)) {
+            const launchError = failedSpawns.get(instruction.agentIndex)!;
+            logWarn(`[TeamResponseCollector] Agent ${instruction.agentIndex} (${agentName}) launch failed: ${launchError}`);
+            if (taskListPath) {
+                try {
+                    updateSharedTaskStatus(taskListPath, instruction.agentIndex, 'failed');
+                } catch { /* ignore */ }
+            }
+            completedCount++;
+            completedAgentIndices.add(instruction.agentIndex);
+            return {
+                agentName,
+                success: false,
+                response: `Launch failed: ${launchError}`,
+                durationMs: Date.now() - startTime,
+                threadId: threadId ?? undefined,
+            } as OrchestrationResult;
+        }
 
         try {
             // レスポンスパターン:

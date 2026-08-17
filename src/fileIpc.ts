@@ -23,6 +23,8 @@ const MAX_RESPONSE_SIZE_BYTES = 5 * 1024 * 1024;
 const WRITE_SETTLE_MS = 200;
 /** ポーリング間隔（ms） */
 const POLL_INTERVAL_MS = 500;
+/** 進捗無更新時のデフォルト非アクティブ監視タイムアウト（ms）: 15分 */
+export const DEFAULT_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
 
 /** ワークスペース名をファイル名に安全に使えるようサニタイズする */
 export function sanitizeWorkspaceName(name?: string): string {
@@ -52,6 +54,8 @@ export class FileIpc {
     private readonly activeRequests = new Set<string>();
     /** 削除から保護するファイル名（basename）の集合 */
     private readonly protectedFiles = new Set<string>();
+    /** デフォルトの非アクティブ監視タイムアウト（ms） */
+    private defaultInactivityTimeoutMs: number = DEFAULT_INACTIVITY_TIMEOUT_MS;
 
     constructor(storageUri: vscode.Uri) {
         this.storagePath = storageUri.fsPath;
@@ -135,16 +139,47 @@ export class FileIpc {
         logDebug(`FileIpc: unregistered active request: ${requestId} (protected files: ${this.protectedFiles.size})`);
     }
 
+    /** 非アクティブ監視タイムアウト（ms）を設定 */
+    setInactivityTimeout(ms: number): void {
+        this.defaultInactivityTimeoutMs = ms;
+    }
+
+    /** 非アクティブ監視タイムアウト（ms）を取得 */
+    getInactivityTimeout(): number {
+        return this.defaultInactivityTimeoutMs;
+    }
+
+    /** 指定された requestId が現在待機中かどうかを返す */
+    isRequestActive(requestId: string): boolean {
+        return this.activeRequests.has(requestId);
+    }
+
+    /** 現在待機中の全 requestId の Set を取得（読み取り専用） */
+    getActiveRequests(): ReadonlySet<string> {
+        return this.activeRequests;
+    }
+
     /**
      * レスポンスファイルの出現を待機する。
      * ポーリング方式（fs.watch は Windows で不安定なため）。
      *
      * 進捗ファイルの更新を検知してタイムアウトをリセットする:
      *   - 進捗ファイル（*_progress.json）の mtime が更新されるたびにタイムアウト起点をリセット
-     *   - 最後の進捗報告（または初回送信）から timeoutMs 経過で初めてタイムアウト
+     *   - 最後の進捗報告（または初回送信）から effectiveTimeout 経過でタイムアウト
+     *   - timeoutMs=0 の場合でも inactivityTimeoutMs のウォッチドッグでハングを防止
      */
-    async waitForResponse(responsePath: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+    async waitForResponse(
+        responsePath: string,
+        timeoutMs: number,
+        signal?: AbortSignal,
+        inactivityTimeoutMs?: number,
+    ): Promise<string> {
         let lastActivityTime = Date.now();
+
+        const effectiveInactivity = inactivityTimeoutMs !== undefined ? inactivityTimeoutMs : this.defaultInactivityTimeoutMs;
+        const effectiveTimeoutMs = timeoutMs > 0
+            ? (effectiveInactivity > 0 ? Math.min(timeoutMs, effectiveInactivity) : timeoutMs)
+            : (effectiveInactivity > 0 ? effectiveInactivity : 0);
 
         // 進捗ファイルのパスを responsePath から導出
         const progressPattern = /_response\.(json|md)$/;
@@ -272,11 +307,11 @@ export class FileIpc {
                 await tryReadResponse();
             }, POLL_INTERVAL_MS);
 
-            // --- タイムアウト監視（1秒間隔でチェック）: timeoutMs=0 は無制限 ---
-            if (timeoutMs > 0) {
+            // --- タイムアウト監視（1秒間隔でチェック）: effectiveTimeoutMs によるウォッチドッグ ---
+            if (effectiveTimeoutMs > 0) {
                 timeoutTimer = setInterval(async () => {
                     if (settled) { return; }
-                    if (Date.now() - lastActivityTime >= timeoutMs) {
+                    if (Date.now() - lastActivityTime >= effectiveTimeoutMs) {
                         const totalElapsedMs = Date.now() - lastActivityTime;
                         const totalElapsedSec = Math.round(totalElapsedMs / 1000);
                         const progressInfo = lastProgressMtime > 0
@@ -293,18 +328,21 @@ export class FileIpc {
                         settled = true;
                         cleanup();
 
+                        const isWatchdog = timeoutMs === 0 || (effectiveInactivity > 0 && effectiveTimeoutMs === effectiveInactivity && timeoutMs > effectiveInactivity);
+                        const timeoutKind = isWatchdog ? 'inactivity timeout' : 'response timeout';
+
                         // ログ強化: logWarn でメトリクス出力
-                        logWarn(`FileIpc: waitForResponse TIMEOUT — elapsed=${totalElapsedSec}s, timeout=${timeoutMs}ms, ${progressInfo}, responseFileExists=${responseFileExists}, path=${responsePath}`);
+                        logWarn(`FileIpc: waitForResponse ${timeoutKind.toUpperCase()} — elapsed=${totalElapsedSec}s, effectiveTimeout=${effectiveTimeoutMs}ms, timeoutMs=${timeoutMs}ms, ${progressInfo}, responseFileExists=${responseFileExists}, path=${responsePath}`);
 
                         // タイムアウトしたレスポンスファイルは削除しない（stale recovery でピックアップするため残す）
                         if (responseFileExists) {
                             logDebug('FileIpc: timed-out response file exists — leaving for stale recovery');
                         }
 
-                        reject(new IpcTimeoutError(`FileIpc: response timeout (${timeoutMs}ms, ${progressInfo}) — file never appeared at ${responsePath}`));
+                        reject(new IpcTimeoutError(`FileIpc: ${timeoutKind} (${effectiveTimeoutMs}ms, ${progressInfo}) — file never appeared at ${responsePath}`));
                     }
                 }, POLL_INTERVAL_MS);
-            } // if (timeoutMs > 0)
+            } // if (effectiveTimeoutMs > 0)
         });
     }
 
@@ -321,8 +359,14 @@ export class FileIpc {
         fallbackPattern: RegExp,
         timeoutMs: number,
         signal?: AbortSignal,
+        inactivityTimeoutMs?: number,
     ): Promise<string> {
         let lastActivityTime = Date.now();
+
+        const effectiveInactivity = inactivityTimeoutMs !== undefined ? inactivityTimeoutMs : this.defaultInactivityTimeoutMs;
+        const effectiveTimeoutMs = timeoutMs > 0
+            ? (effectiveInactivity > 0 ? Math.min(timeoutMs, effectiveInactivity) : timeoutMs)
+            : (effectiveInactivity > 0 ? effectiveInactivity : 0);
 
         const progressPatternRe = /_response\.(json|md)$/;
         const progressPath = primaryPath.replace(progressPatternRe, '_progress.json');
@@ -467,18 +511,22 @@ export class FileIpc {
                 await tryReadResponse();
             }, POLL_INTERVAL_MS);
 
-            timeoutTimer = setInterval(async () => {
-                if (settled) { return; }
-                if (Date.now() - lastActivityTime >= timeoutMs) {
-                    settled = true;
-                    cleanup();
-                    const progressInfo = lastProgressMtime > 0
-                        ? `last progress ${Math.round((Date.now() - lastProgressMtime) / 1000)}s ago`
-                        : 'no progress received';
-                    logWarn(`FileIpc: waitForResponseWithPattern TIMEOUT — ${progressInfo}, primary=${filename}`);
-                    reject(new IpcTimeoutError(`FileIpc: response timeout (${timeoutMs}ms, ${progressInfo})`));
-                }
-            }, POLL_INTERVAL_MS);
+            if (effectiveTimeoutMs > 0) {
+                timeoutTimer = setInterval(async () => {
+                    if (settled) { return; }
+                    if (Date.now() - lastActivityTime >= effectiveTimeoutMs) {
+                        settled = true;
+                        cleanup();
+                        const progressInfo = lastProgressMtime > 0
+                            ? `last progress ${Math.round((Date.now() - lastProgressMtime) / 1000)}s ago`
+                            : 'no progress received';
+                        const isWatchdog = timeoutMs === 0 || (effectiveInactivity > 0 && effectiveTimeoutMs === effectiveInactivity && timeoutMs > effectiveInactivity);
+                        const timeoutKind = isWatchdog ? 'inactivity timeout' : 'response timeout';
+                        logWarn(`FileIpc: waitForResponseWithPattern ${timeoutKind.toUpperCase()} — elapsed=${Math.round((Date.now() - lastActivityTime) / 1000)}s, ${progressInfo}, primary=${filename}`);
+                        reject(new IpcTimeoutError(`FileIpc: ${timeoutKind} (${effectiveTimeoutMs}ms, ${progressInfo})`));
+                    }
+                }, POLL_INTERVAL_MS);
+            }
         });
     }
 
@@ -502,6 +550,13 @@ export class FileIpc {
                 if (!match) { continue; }
 
                 const requestId = match[1];
+
+                // アクティブ待機中のリクエストはスキップ（誤回収防止）
+                if (this.activeRequests.has(requestId)) {
+                    logDebug(`FileIpc: skipping active request in recoverStaleResponses: ${requestId}`);
+                    continue;
+                }
+
                 const format = match[2] as 'json' | 'md';
                 const fp = path.join(this.ipcDir, f);
 

@@ -69,6 +69,9 @@ vi.mock('../cdpTargets', () => ({
 vi.mock('../subagentIpc', () => ({
     writePrompt: vi.fn(() => '/mock/ipc/prompt.json'),
     watchResponse: vi.fn().mockResolvedValue(null),
+    watchReady: vi.fn().mockResolvedValue(true),
+    isAgentAliveIpc: vi.fn().mockReturnValue(true),
+    cleanupAgentIpc: vi.fn(),
 }));
 
 import { SubagentManager } from '../subagentManager';
@@ -245,6 +248,74 @@ describe('SubagentManager', () => {
 
 
     // -----------------------------------------------------------------------
+    // spawn & ウィンドウ再利用
+    // -----------------------------------------------------------------------
+
+    describe('spawn & ウィンドウ再利用', () => {
+        it('新しいサブエージェントを正常に起動できる', async () => {
+            const { manager } = createManager();
+            vi.useRealTimers();
+            const handle = await manager.spawn(undefined, 'TestWS', undefined, true, 1);
+            expect(handle).toBeDefined();
+            expect(handle.name).toBe('testws-subagent-1');
+            expect(manager.list('TestWS')).toHaveLength(1);
+        });
+
+        it('アイドルプール回収済み（READY状態）のエージェントを spawn で再利用できる（maxConcurrent上限時）', async () => {
+            const { manager } = createManager({ maxConcurrent: 2 });
+            vi.useRealTimers();
+
+            // 1 & 2 を起動
+            const h1 = await manager.spawn(undefined, 'TestWS', undefined, true, 1);
+            const h2 = await manager.spawn(undefined, 'TestWS', undefined, true, 2);
+            expect(manager.list('TestWS')).toHaveLength(2);
+
+            // アイドルプールに移動
+            await manager.moveToIdlePool(h1);
+            await manager.moveToIdlePool(h2);
+            expect(manager.list('TestWS')).toHaveLength(0);
+
+            // アイドルプールから回収（this.agents に READY 状態で入る）
+            const reclaimed = await manager.reclaimFromIdlePool();
+            expect(reclaimed).toHaveLength(2);
+            expect(manager.list('TestWS')).toHaveLength(2);
+
+            // spawn を呼び出したとき、maxConcurrent(2) に達していても既存の READY エージェントを再利用して成功する
+            const reused1 = await manager.spawn(undefined, 'TestWS', undefined, true, 1);
+            expect(reused1.name).toBe('testws-subagent-1');
+            expect(reused1).toBe(h1);
+
+            const reused2 = await manager.spawn(undefined, 'TestWS', undefined, true, 2);
+            expect(reused2.name).toBe('testws-subagent-2');
+            expect(reused2).toBe(h2);
+        });
+
+        it('アイドルプール内に残っているエージェントを spawn 時に直接回収して再利用できる', async () => {
+            const { manager } = createManager({ maxConcurrent: 2 });
+            vi.useRealTimers();
+
+            const h1 = await manager.spawn(undefined, 'TestWS', undefined, true, 1);
+            await manager.moveToIdlePool(h1);
+
+            // reclaimFromIdlePool() を事前に呼ばずに spawn()
+            const reused = await manager.spawn(undefined, 'TestWS', undefined, true, 1);
+            expect(reused.name).toBe('testws-subagent-1');
+            expect(reused).toBe(h1);
+        });
+
+        it('maxConcurrent 上限超過時はエラーをスローする（新規エージェント時）', async () => {
+            const { manager } = createManager({ maxConcurrent: 1 });
+            vi.useRealTimers();
+
+            await manager.spawn(undefined, 'TestWS', undefined, true, 1);
+
+            await expect(manager.spawn(undefined, 'TestWS', undefined, true, 2)).rejects.toThrow(
+                /Maximum concurrent limit \(1\) reached/
+            );
+        });
+    });
+
+    // -----------------------------------------------------------------------
     // cleanupStaleAgents
     // -----------------------------------------------------------------------
 
@@ -257,3 +328,4 @@ describe('SubagentManager', () => {
         });
     });
 });
+

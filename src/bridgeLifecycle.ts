@@ -28,9 +28,9 @@ import { registerGuildCommands } from './slashCommands';
 import { cleanupOldAttachments } from './attachmentDownloader';
 import { acquireLock, releaseLock } from './botLock';
 import { BridgeContext } from './bridgeContext';
-import { enqueueMessage } from './messageHandler';
+import { enqueueMessage, registerExecutorForCancellation } from './messageHandler';
 import { handleSlashCommand, handleButtonInteraction, handleAutocomplete, handleModalSubmit } from './slashHandler';
-import { getConfig, getResponseTimeout, getTimezone, getArchiveDays, getWorkspacePaths, getClientId, getCdpPorts } from './configHelper';
+import { getConfig, getResponseTimeout, getInactivityTimeout, getTimezone, getArchiveDays, getWorkspacePaths, getClientId, getCdpPorts } from './configHelper';
 import { archiveOldCategories } from './categoryArchiver';
 
 import { setSummarizeOps, stripMemoryTags } from './memoryStore';
@@ -127,14 +127,13 @@ async function redeliverStaleResponses(
     ctx: BridgeContext,
     staleResponses: import('./fileIpc').StaleResponse[],
 ): Promise<void> {
-    // 連続オートモード中は stale response リカバリーをスキップ
-    // （連続オートモードのレスポンス管理は autoModeContinueLoop が担当）
-    if (isAutoModeActive()) {
-        logDebug('Bridge: skipping stale response recovery — auto mode is active');
-        return;
-    }
     if (staleResponses.length === 0) { return; }
     for (const sr of staleResponses) {
+        // アクティブ待機中のリクエストはスキップ（誤回収防止）
+        if (ctx.fileIpc?.isRequestActive(sr.requestId)) {
+            logDebug(`Bridge: skipping active request in redeliverStaleResponses: ${sr.requestId}`);
+            continue;
+        }
         try {
             if (ctx.bot && ctx.bot.isReady()) {
                 // ワークスペース名の補完: meta になければ requestId から抽出（req_{ws}_{ts}_{uuid} 形式）
@@ -526,6 +525,8 @@ async function startBridgeInternal(
 
     // FileIpc 初期化
     ctx.fileIpc = new FileIpc(storageUri);
+    const inactivityTimeout = getInactivityTimeout();
+    ctx.fileIpc.setInactivityTimeout(inactivityTimeout);
     await ctx.fileIpc.init();
 
     // 起動時 stale レスポンスリカバリー（Phase 2: Bot 初期化後に Discord 再送）
@@ -627,7 +628,8 @@ async function startBridgeInternal(
     // ExecutorPool にも BridgeContext を注入
     ctx.executorPool.setBridgeContext(ctx);
 
-
+    // 統合キャンセル機構に Executor と ExecutorPool を登録
+    registerExecutorForCancellation(ctx.executor, ctx.executorPool);
 
     // TemplateStore 初期化
     ctx.templateStore = new TemplateStore(storageUri.fsPath);
@@ -805,14 +807,9 @@ async function startBridgeInternal(
     // Phase 2: stale response を Discord に再送（初回）
     await redeliverStaleResponses(ctx, pendingStaleResponses);
 
-    // 定期 stale response チェック（5分間隔 — 再起動後に AI が書いたレスポンスもピックアップ）
+    // 定期 stale response チェック（5分間隔 — 再起動後に AI が書いたレスポンスや孤立レスポンスもピックアップ）
     ctx.staleRecoveryTimer = setInterval(async () => {
         if (!ctx.fileIpc || !ctx.bot || !ctx.bot.isReady()) { return; }
-        // 連続オートモード中はスキップ（autoModeContinueLoop がレスポンスを管理中）
-        if (isAutoModeActive()) {
-            logDebug('Bridge: skipping periodic stale check — auto mode is active');
-            return;
-        }
         try {
             const stale = await ctx.fileIpc.recoverStaleResponses();
             if (stale.length > 0) {
@@ -913,6 +910,9 @@ export async function stopBridge(ctx: BridgeContext): Promise<void> {
 
     // サマライズ Ops をクリア
     setSummarizeOps(null);
+
+    // 統合キャンセル機構の登録を解除
+    registerExecutorForCancellation(null, null);
 
     // SubagentManager の破棄
     if (ctx.subagentManager) {

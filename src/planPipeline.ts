@@ -597,7 +597,8 @@ export async function dispatchPlan(
                         );
 
                         // Phase 5: 報告 IPC ファイルを生成 → メインエージェントに報告プロンプト送信
-                        const { requestId: reportReqId, responsePath: reportResponsePath } = fileIpc!.createRequestId();
+                        const { requestId: reportReqId, responsePath: reportResponsePath } = fileIpc!.createMarkdownRequestId(wsNameForImmediate);
+                        fileIpc!.writeRequestMeta(reportReqId, channel.id, wsNameForImmediate);
                         logDebug(`dispatchPlan: Team mode — reportReqId=${reportReqId}, reportResponsePath=${reportResponsePath}`);
                         const reportPath = ctx.teamOrchestrator.writeReportFile(
                             teamRequestId,
@@ -622,17 +623,23 @@ export async function dispatchPlan(
                         // 統合レポートフェーズ開始を Discord に通知
                         await channel.send({ embeds: [buildEmbed(t('pipeline.reportStarted', String(teamResult.results.length)), EmbedColor.Info)] }).catch(() => { });
 
-                        // 既存チャットにそのまま報告プロンプトを送信（コンテキストを維持）
+                        // 既存チャットに報告プロンプトを送信（コンテキストを維持）
                         try {
+                            try {
+                                await activeCdp.ensureCascadePanel();
+                            } catch (panelErr) {
+                                logWarn(`dispatchPlan: Team mode — ensureCascadePanel before report prompt: ${panelErr}`);
+                            }
                             await activeCdp.sendPrompt(reportPrompt, wsNameFromCategory ?? undefined);
                             logDebug('dispatchPlan: Team mode — report prompt sent, waiting for response...');
                         } catch (sendErr) {
-                            logError(`dispatchPlan: Team mode — failed to send report prompt via CDP: ${sendErr instanceof Error ? sendErr.message : sendErr}`, sendErr);
+                            logWarn(`dispatchPlan: Team mode — failed to send report prompt via CDP: ${sendErr instanceof Error ? sendErr.message : sendErr}`);
                             throw new Error(`Report prompt send failed: ${sendErr instanceof Error ? sendErr.message : sendErr}`);
                         }
 
                         // メインエージェントの統合レポートを待機（進捗ポーリング付き）
-                        const cascadeReportTimeoutMs = 600_000;
+                        // 進捗更新があれば自動リセットされるため、無応答時のハングを防ぐために 60 秒でフェイルファスト
+                        const cascadeReportTimeoutMs = 60_000;
                         fileIpc!.registerActiveRequest(reportReqId);
 
                         // 進捗ポーリング: メインエージェントの progress.json を 3 秒間隔で監視し Discord に中継
@@ -672,12 +679,8 @@ export async function dispatchPlan(
                                     return bot!.sendFileToChannel(channelId, filePath, comment);
                                 },
                                 sendEmbeds: async (descriptions, color) => {
-                                    const embeds = descriptions.map((desc) =>
-                                        new EmbedBuilder()
-                                            .setDescription(desc)
-                                            .setColor(color)
-                                    );
-                                    await channel.send({ embeds });
+                                    const combined = descriptions.join('\n');
+                                    await bot!.sendToChannel(channel.id, combined, color);
                                 },
                                 sendSuggestionButtons: async (suggestions) => {
                                     const row = buildSuggestionRow(suggestions, wsNameForImmediate);
@@ -703,6 +706,11 @@ export async function dispatchPlan(
                             clearInterval(reportTypingInterval);
                             fileIpc!.cleanupProgress(reportProgressPath).catch(() => { });
                             fileIpc!.unregisterActiveRequest(reportReqId);
+                            try {
+                                await fs.promises.unlink(reportResponsePath);
+                                const metaPath = reportResponsePath.replace(/_response\.(json|md)$/, '_meta.json');
+                                await fs.promises.unlink(metaPath).catch(() => { });
+                            } catch { /* ignore */ }
                         }
                     } catch (cascadeErr) {
                         // Cascade 送信/待機に失敗した場合はフォールバック: 個別結果を直接送信
@@ -727,12 +735,8 @@ export async function dispatchPlan(
                                         return bot!.sendFileToChannel(channelId, filePath, comment);
                                     },
                                     sendEmbeds: async (descriptions, color) => {
-                                        const embeds = descriptions.map((desc) =>
-                                            new EmbedBuilder()
-                                                .setDescription(desc)
-                                                .setColor(color)
-                                        );
-                                        await channel.send({ embeds });
+                                        const combined = descriptions.join('\n');
+                                        await bot!.sendToChannel(channel.id, combined, color);
                                     },
                                     sendSuggestionButtons: async (suggestions) => {
                                         const row = buildSuggestionRow(suggestions, wsNameForImmediate);

@@ -109,6 +109,7 @@ vi.mock('../discordFormatter', () => ({
 }));
 
 import { Executor } from '../executor';
+import { IpcTimeoutError } from '../errors';
 import type { Plan, ExecutionJob } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -747,6 +748,50 @@ describe('Executor', () => {
             const promptCall = writeCalls.find(
                 (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('attachment'));
             expect(promptCall).toBeDefined();
+        });
+    });
+
+    describe('executeJob — AbortSignal & IpcTimeoutError handling', () => {
+        it('should pass AbortSignal to waitForResponse and abort on forceStop', async () => {
+            const { executor, fileIpc } = createExecutor();
+
+            let passedSignal: AbortSignal | undefined;
+            fileIpc.waitForResponse.mockImplementation((_path: string, _timeout: number, signal?: AbortSignal) => {
+                passedSignal = signal;
+                return new Promise((_resolve, reject) => {
+                    signal?.addEventListener('abort', () => reject(new Error('FileIpc: aborted')));
+                });
+            });
+
+            const plan = createMockPlan({ plan_id: 'signal-test-001' });
+            const jobPromise = executor.enqueueImmediate(plan);
+
+            await new Promise(r => setTimeout(r, 20));
+            expect(passedSignal).toBeDefined();
+            expect(passedSignal?.aborted).toBe(false);
+
+            executor.forceStop();
+
+            await jobPromise;
+            expect(passedSignal?.aborted).toBe(true);
+            expect(executor.isRunning()).toBe(false);
+        });
+
+        it('should handle IpcTimeoutError without infinite retries and record failure', async () => {
+            const { executor, fileIpc, notifyDiscord } = createExecutor();
+            const { IpcTimeoutError: MockTimeoutError } = await import('../errors');
+
+            fileIpc.waitForResponse.mockRejectedValue(new MockTimeoutError('FileIpc: inactivity timeout (900000ms)'));
+
+            const plan = createMockPlan({ plan_id: 'timeout-test-001' });
+            await executor.enqueueImmediate(plan);
+
+            // Verify timeout message is notified with timer emoji
+            const timeoutNotifications = notifyDiscord.mock.calls.filter(
+                (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('⏱️'));
+            expect(timeoutNotifications.length).toBeGreaterThanOrEqual(1);
+
+            expect(executor.isRunning()).toBe(false);
         });
     });
 });

@@ -43,6 +43,8 @@ vi.mock('../embedHelper', () => ({
         Progress: 0x3498db,
     },
     buildEmbed: vi.fn(() => ({ toJSON: () => ({}) })),
+    sanitizeErrorForDiscord: vi.fn((err: string) => err),
+    normalizeHeadings: vi.fn((text: string) => text),
 }));
 
 vi.mock('../i18n', () => ({
@@ -60,6 +62,7 @@ vi.mock('../messageQueue', () => ({
     cancelPlanGeneration: vi.fn(),
     enqueueMessage: vi.fn(),
     getActivePlanProgressIntervals: vi.fn(() => []),
+    setTeamAbortController: vi.fn(),
 }));
 
 vi.mock('../autoModeController', () => ({
@@ -103,7 +106,9 @@ vi.mock('../bridgeContext', () => ({
 // ---------------------------------------------------------------------------
 // テスト対象のインポート
 // ---------------------------------------------------------------------------
-import { resolveReplyContext, applyChoiceSelection } from '../planPipeline';
+import { resolveReplyContext, applyChoiceSelection, dispatchPlan } from '../planPipeline';
+import type { BridgeContext } from '../bridgeContext';
+import type { Plan } from '../types';
 
 // ---------------------------------------------------------------------------
 // ヘルパー
@@ -113,6 +118,7 @@ function createMockChannel(overrides: Record<string, unknown> = {}): TextChannel
     return {
         id: 'test-channel-id',
         send: vi.fn().mockResolvedValue(undefined),
+        sendTyping: vi.fn().mockResolvedValue(undefined),
         messages: {
             fetch: vi.fn().mockResolvedValue({
                 content: '元のメッセージ内容',
@@ -212,4 +218,108 @@ describe('planPipeline', () => {
             expect(plan.prompt).toContain('3');
         });
     });
+
+    // -----------------------------------------------------------------------
+    // dispatchPlan (Team Mode)
+    // -----------------------------------------------------------------------
+
+    describe('dispatchPlan (Team Mode)', () => {
+        it('should use markdown response path and write metadata for integrated team report', async () => {
+            const reportReqId = 'req_report_123';
+            const reportResponsePath = '/tmp/ipc/req_report_123_response.md';
+            const mockFileIpc = {
+                createMarkdownRequestId: vi.fn().mockReturnValue({
+                    requestId: reportReqId,
+                    responsePath: reportResponsePath,
+                }),
+                writeRequestMeta: vi.fn(),
+                registerActiveRequest: vi.fn(),
+                unregisterActiveRequest: vi.fn(),
+                readProgress: vi.fn().mockResolvedValue(null),
+                cleanupProgress: vi.fn().mockResolvedValue(undefined),
+                waitForResponse: vi.fn().mockResolvedValue('# Consolidated Team Report\n\nAll tasks completed.'),
+            };
+
+            const mockBot = {
+                sendToChannel: vi.fn().mockResolvedValue(undefined),
+                sendFileToChannel: vi.fn().mockResolvedValue({ sent: true }),
+                sendComponentsToChannel: vi.fn().mockResolvedValue(undefined),
+            };
+
+            const mockTeamOrchestrator = {
+                groupTasks: vi.fn((tasks) => tasks),
+                writeInstructionFiles: vi.fn().mockReturnValue([]),
+                orchestrateTeam: vi.fn().mockResolvedValue({
+                    results: [
+                        { agentName: 'subagent-1', success: true, response: 'Done 1', durationMs: 1000 },
+                        { agentName: 'subagent-2', success: true, response: 'Done 2', durationMs: 1200 },
+                    ],
+                    totalDurationMs: 2200,
+                    successCount: 2,
+                    failCount: 0,
+                }),
+                writeReportFile: vi.fn().mockReturnValue('/tmp/ipc/req_report_123_all.json'),
+                writeReportInstructionFile: vi.fn().mockReturnValue({
+                    instructionPath: '/tmp/ipc/tmp_exec_report.json',
+                    progressPath: '/tmp/ipc/report_progress.json',
+                }),
+            };
+
+            const mockActiveCdp = {
+                getActiveWorkspaceName: vi.fn().mockReturnValue('test-workspace'),
+                ensureCascadePanel: vi.fn().mockResolvedValue(undefined),
+                sendPrompt: vi.fn().mockResolvedValue(undefined),
+            };
+
+            const ctx: Partial<BridgeContext> = {
+                bot: mockBot as any,
+                fileIpc: mockFileIpc as any,
+                teamOrchestrator: mockTeamOrchestrator as any,
+                cdpPool: {
+                    getResolvedWorkspacePaths: vi.fn().mockReturnValue({}),
+                } as any,
+            };
+
+            const plan: Plan = {
+                plan_id: 'plan-123',
+                timezone: 'UTC',
+                source_channel_id: 'test-channel-456',
+                notify_channel_id: 'test-channel-456',
+                created_at: new Date().toISOString(),
+                prompt: 'Run full verification',
+                tasks: [
+                    'Implement backend changes in manager.py',
+                    'Implement frontend screen test in test.dart',
+                ],
+                cron: null,
+                status: 'active',
+                choice_mode: 'none',
+                requires_confirmation: false,
+                discord_templates: {
+                    ack: 'Awaiting execution',
+                },
+            };
+
+            const channel = createMockChannel({ id: 'test-channel-456' });
+
+            const result = await dispatchPlan(
+                ctx as BridgeContext,
+                plan,
+                channel,
+                mockActiveCdp as any,
+                'test-workspace',
+                null,
+                true, // isTeamMode
+                false, // autoMode
+            );
+
+            expect(mockFileIpc.createMarkdownRequestId).toHaveBeenCalledWith('test-workspace');
+            expect(mockFileIpc.writeRequestMeta).toHaveBeenCalledWith(reportReqId, 'test-channel-456', 'test-workspace');
+            expect(mockActiveCdp.sendPrompt).toHaveBeenCalled();
+            expect(mockFileIpc.waitForResponse).toHaveBeenCalledWith(reportResponsePath, 60000);
+            expect(mockFileIpc.unregisterActiveRequest).toHaveBeenCalledWith(reportReqId);
+            expect(result).toContain('Consolidated Team Report');
+        });
+    });
 });
+

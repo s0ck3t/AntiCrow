@@ -569,6 +569,10 @@ export class Executor {
         let currentCleanContent = cleanContent;
 
         while (true) {
+            if (this.aborted) {
+                logInfo('Executor: autoModeContinueLoop — loop aborted');
+                return;
+            }
             try {
                 // onStepComplete: セーフティチェック → Discord通知 → ループ継続判定 → 次プロンプト構築
                 const nextPrompt = await onStepComplete(channel, currentSuggestions, currentCleanContent, plan.workspace_name);
@@ -768,6 +772,10 @@ export class Executor {
                 getActivePlanProgressIntervals().add(stepProgress);
 
                 let stepResponse: string;
+                this.running = true;
+                this.abortController = new AbortController();
+                const { signal } = this.abortController;
+
                 try {
                     // CDP 経由でプロンプト送信
                     await this.cdp.sendPrompt(nextCdpInstruction, plan.workspace_name);
@@ -779,11 +787,13 @@ export class Executor {
                     // レスポンス待ち
                     this.fileIpc.registerActiveRequest(nextReqId);
                     try {
-                        stepResponse = await this.fileIpc.waitForResponse(nextResponsePath, this.timeoutMs);
+                        stepResponse = await this.fileIpc.waitForResponse(nextResponsePath, this.timeoutMs, signal);
                     } finally {
                         this.fileIpc.unregisterActiveRequest(nextReqId);
                     }
                 } finally {
+                    this.running = false;
+                    this.abortController = null;
                     clearInterval(stepTyping);
                     getActivePlanTypingIntervals().delete(stepTyping);
                     clearInterval(stepProgress);
@@ -835,6 +845,10 @@ export class Executor {
                 currentCleanContent = stepCleanContent;
 
             } catch (err) {
+                if (this.aborted) {
+                    logInfo('Executor: autoModeContinueLoop — stopped via abort');
+                    return;
+                }
                 logError('Executor: autoModeContinueLoop — error in loop', err);
                 await handleAutoModeError(channel, err, plan.workspace_name);
                 return;

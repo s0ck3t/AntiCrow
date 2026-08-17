@@ -109,6 +109,11 @@
           "default": 0,
           "description": "Idle timeout since last progress update (in milliseconds). 0 = unlimited. Resets automatically whenever progress is reported."
         },
+        "antiCrow.inactivityTimeoutMs": {
+          "type": "number",
+          "default": 900000,
+          "description": "Watchdog timeout since last progress update or file event (in milliseconds). Default: 900000 (15 minutes). 0 = disable watchdog."
+        },
         "antiCrow.maxRetries": {
           "type": "number",
           "default": 0,

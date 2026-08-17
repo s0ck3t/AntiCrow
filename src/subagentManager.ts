@@ -69,15 +69,6 @@ export class SubagentManager {
         // spawn 前に stale エージェントをクリーンアップ
         await this.cleanupStaleAgents();
 
-        // Concurrent execution limit check
-        const activeCount = this.getActiveCount();
-        if (activeCount >= this.config.maxConcurrent) {
-            throw new Error(
-                `Maximum concurrent limit (${this.config.maxConcurrent}) reached. ` +
-                `Currently ${activeCount} subagent(s) active.`
-            );
-        }
-
         // ワークスペース名を決定（オーバーライド優先）→ サニタイズして安全な名前にする
         const rawWsName = workspaceName ?? this.cdpBridge.getActiveWorkspaceName() ?? 'anti-crow';
         const mainWsName = rawWsName.toLowerCase().replace(/\s+/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
@@ -89,6 +80,54 @@ export class SubagentManager {
 
         // repoRoot を決定（オーバーライド優先）
         const effectiveRepoRoot = repoRootOverride || this.repoRoot;
+
+        // 既存の再利用可能エージェント（アイドルプール回収済み等）があるか確認
+        const existing = this.agents.get(name);
+        if (existing) {
+            const s = existing.state;
+            if (s === 'READY' || s === 'IDLE') {
+                const alive = await existing.isAlive().catch(() => false);
+                if (alive) {
+                    logDebug(`[SubagentManager] 既存の READY サブエージェント "${name}" を再利用します`);
+                    if (taskPrompt) {
+                        return existing;
+                    }
+                    return existing;
+                } else {
+                    // 死んでいる既存エージェントは削除して再作成
+                    try { await existing.close(); } catch { /* ignore */ }
+                    this.agents.delete(name);
+                }
+            }
+        }
+
+        // アイドルプール内に未回収の対象エージェントがあるか確認
+        const idle = this.idlePool.get(name);
+        if (idle) {
+            const alive = await idle.handle.isAlive().catch(() => false);
+            if (alive) {
+                await idle.handle.resetForReuse();
+                this.idlePool.delete(name);
+                this.agents.set(name, idle.handle);
+                logDebug(`[SubagentManager] アイドルプールから "${name}" を回収して再利用します`);
+                if (taskPrompt) {
+                    return idle.handle;
+                }
+                return idle.handle;
+            } else {
+                try { await idle.handle.close(); } catch { /* ignore */ }
+                this.idlePool.delete(name);
+            }
+        }
+
+        // Concurrent execution limit check
+        const activeCount = this.getActiveCount();
+        if (activeCount >= this.config.maxConcurrent) {
+            throw new Error(
+                `Maximum concurrent limit (${this.config.maxConcurrent}) reached. ` +
+                `Currently ${activeCount} subagent(s) active.`
+            );
+        }
 
         logDebug(`[SubagentManager] サブエージェント "${name}" を起動中... (repoRoot=${effectiveRepoRoot})`);
 

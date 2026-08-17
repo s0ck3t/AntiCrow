@@ -36,6 +36,9 @@ export function getCdpPorts(_storagePath?: string): number[] {
 /** CDP レスポンスタイムアウト（ms）のデフォルト値。0 = 無制限（stale recovery + /stop がセーフネット） */
 export const DEFAULT_RESPONSE_TIMEOUT_MS = 0;
 
+/** 進捗無更新時の非アクティブ監視タイムアウト（ms）のデフォルト値: 15分 (900,000ms) */
+export const DEFAULT_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+
 /** タイムゾーンのデフォルト値 */
 export const DEFAULT_TIMEZONE = 'Asia/Tokyo';
 
@@ -62,6 +65,11 @@ export function getLanguage(): string {
 /** CDP レスポンスタイムアウト（ms）を取得する（デフォルト: 0 = 無制限） */
 export function getResponseTimeout(): number {
     return getConfig().get<number>('responseTimeoutMs') || DEFAULT_RESPONSE_TIMEOUT_MS;
+}
+
+/** 進捗無更新時の非アクティブタイムアウト（ms）を取得する（デフォルト: 15分 = 900000ms、0 = 無効） */
+export function getInactivityTimeout(): number {
+    return getConfig().get<number>('inactivityTimeoutMs') ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
 }
 
 /** タイムゾーンを取得する（設定値が空の場合は OS から自動取得） */

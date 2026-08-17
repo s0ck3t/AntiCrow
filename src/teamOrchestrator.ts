@@ -889,6 +889,7 @@ export class TeamOrchestrator {
         // --- Phase 3: Launch subagents & send prompts ---
         const agentThreads = new Map<number, string>(); // agentIndex -> threadId
         const agentNames = new Map<number, string>();     // agentIndex -> agentName
+        const failedSpawns = new Map<number, string>();   // agentIndex -> errMsg
         const teamRequestId = instructions[0]?.requestId ?? `${Date.now()}`;
 
         // Individual subagent launch handler
@@ -968,6 +969,7 @@ export class TeamOrchestrator {
 
             } catch (e) {
                 const errMsg = e instanceof Error ? e.message : String(e);
+                failedSpawns.set(instruction.agentIndex, errMsg);
                 logError(`[TeamOrchestrator] Failed to spawn/send agent ${instruction.agentIndex}: ${errMsg}`, e);
                 await this.sendToDiscord(channelId,
                     `❌ Failed to launch ${t('team.subagentLabel')}${instruction.agentIndex}: ${errMsg}`);
@@ -1023,6 +1025,7 @@ export class TeamOrchestrator {
             teamRequestId,
             boundPollTaskList,
             signal,
+            failedSpawns,
         );
 
         const totalDurationMs = Date.now() - startTime;

@@ -19,8 +19,8 @@ vi.mock('vscode', () => ({
     },
 }));
 
-// FileIpc は静的メソッドなので直接インポート
-import { FileIpc } from '../fileIpc';
+import { FileIpc, DEFAULT_INACTIVITY_TIMEOUT_MS } from '../fileIpc';
+import { IpcTimeoutError } from '../errors';
 
 describe('FileIpc.extractResult', () => {
     // ----- 既知キーからの値抽出 -----
@@ -402,6 +402,149 @@ describe('FileIpc instance methods', () => {
             await ipc.cleanupOldFiles();
 
             expect(fs.existsSync(tmpFile)).toBe(false);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // waitForResponse / inactivity watchdog / cancellation tests
+    // -----------------------------------------------------------------------
+
+    describe('waitForResponse inactivity watchdog & cancellation', () => {
+        it('should time out with IpcTimeoutError when inactivity timeout expires with timeoutMs=0', async () => {
+            const { responsePath } = ipc.createMarkdownRequestId('test_ws');
+
+            // Set a short inactivity timeout (50ms) for testing
+            const waitPromise = ipc.waitForResponse(responsePath, 0, undefined, 50);
+
+            await expect(waitPromise).rejects.toThrow(IpcTimeoutError);
+        });
+
+        it('should time out when explicit timeoutMs expires', async () => {
+            const { responsePath } = ipc.createMarkdownRequestId('test_ws');
+
+            const waitPromise = ipc.waitForResponse(responsePath, 50, undefined, 1000);
+
+            await expect(waitPromise).rejects.toThrow(IpcTimeoutError);
+        });
+
+        it('should successfully read response when written within timeout', async () => {
+            const { responsePath } = ipc.createMarkdownRequestId('test_ws');
+
+            const waitPromise = ipc.waitForResponse(responsePath, 2000, undefined, 2000);
+
+            // Write response after 50ms
+            setTimeout(() => {
+                fs.writeFileSync(responsePath, '# Success Response Content');
+            }, 50);
+
+            const result = await waitPromise;
+            expect(result).toBe('# Success Response Content');
+        });
+
+        it('should reject immediately if AbortSignal is already aborted', async () => {
+            const { responsePath } = ipc.createMarkdownRequestId('test_ws');
+            const controller = new AbortController();
+            controller.abort();
+
+            await expect(ipc.waitForResponse(responsePath, 5000, controller.signal)).rejects.toThrow('aborted');
+        });
+
+        it('should reject when AbortSignal is triggered during wait', async () => {
+            const { responsePath } = ipc.createMarkdownRequestId('test_ws');
+            const controller = new AbortController();
+
+            const waitPromise = ipc.waitForResponse(responsePath, 5000, controller.signal);
+
+            setTimeout(() => {
+                controller.abort();
+            }, 50);
+
+            await expect(waitPromise).rejects.toThrow('aborted');
+        });
+
+        it('should reset inactivity timeout when progress file is updated', async () => {
+            const { requestId, responsePath } = ipc.createMarkdownRequestId('test_ws');
+            const progressPath = ipc.createProgressPath(requestId);
+
+            // Initial wait with 150ms timeout
+            const waitPromise = ipc.waitForResponse(responsePath, 150, undefined, 150);
+
+            // Update progress at 80ms (resetting timeout)
+            setTimeout(() => {
+                fs.writeFileSync(progressPath, JSON.stringify({ status: 'working', percent: 50 }));
+            }, 80);
+
+            // Write response at 160ms (which would have timed out without progress update)
+            setTimeout(() => {
+                fs.writeFileSync(responsePath, '# Completed after progress update');
+            }, 160);
+
+            const result = await waitPromise;
+            expect(result).toBe('# Completed after progress update');
+        });
+    });
+
+    describe('waitForResponseWithPattern', () => {
+        it('should resolve when file matching fallback pattern appears', async () => {
+            const { responsePath } = ipc.createMarkdownRequestId('test_ws');
+            const fallbackPattern = /^req_.*_agent1_response\.md$/;
+            const fallbackFile = path.join(ipcDir, 'req_custom_123_agent1_response.md');
+
+            const waitPromise = ipc.waitForResponseWithPattern(responsePath, fallbackPattern, 2000, undefined, 2000);
+
+            setTimeout(() => {
+                fs.writeFileSync(fallbackFile, '# Agent 1 Fallback Result');
+            }, 50);
+
+            const result = await waitPromise;
+            expect(result).toBe('# Agent 1 Fallback Result');
+        });
+
+        it('should time out with IpcTimeoutError when no pattern match appears', async () => {
+            const { responsePath } = ipc.createMarkdownRequestId('test_ws');
+            const fallbackPattern = /^req_.*_agent99_response\.md$/;
+
+            const waitPromise = ipc.waitForResponseWithPattern(responsePath, fallbackPattern, 50, undefined, 50);
+
+            await expect(waitPromise).rejects.toThrow(IpcTimeoutError);
+        });
+    });
+
+    describe('active request tracking and configuration', () => {
+        it('should correctly configure and return inactivity timeout', () => {
+            expect(ipc.getInactivityTimeout()).toBe(DEFAULT_INACTIVITY_TIMEOUT_MS);
+            ipc.setInactivityTimeout(60000);
+            expect(ipc.getInactivityTimeout()).toBe(60000);
+        });
+
+        it('should track active requests with isRequestActive and getActiveRequests', () => {
+            const reqId = 'req_test_12345';
+            expect(ipc.isRequestActive(reqId)).toBe(false);
+
+            ipc.registerActiveRequest(reqId);
+            expect(ipc.isRequestActive(reqId)).toBe(true);
+            expect(ipc.getActiveRequests().has(reqId)).toBe(true);
+
+            ipc.unregisterActiveRequest(reqId);
+            expect(ipc.isRequestActive(reqId)).toBe(false);
+            expect(ipc.getActiveRequests().has(reqId)).toBe(false);
+        });
+
+        it('should skip active requests in recoverStaleResponses', async () => {
+            const reqId = 'req_active_123_abcdef123456';
+            const responseFile = path.join(ipcDir, `${reqId}_response.md`);
+            fs.writeFileSync(responseFile, '# Active in-flight response');
+
+            ipc.registerActiveRequest(reqId);
+
+            const stale = await ipc.recoverStaleResponses();
+            expect(stale).toHaveLength(0);
+
+            ipc.unregisterActiveRequest(reqId);
+
+            const staleAfter = await ipc.recoverStaleResponses();
+            expect(staleAfter).toHaveLength(1);
+            expect(staleAfter[0].requestId).toBe(reqId);
         });
     });
 });

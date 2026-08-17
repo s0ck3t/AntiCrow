@@ -137,6 +137,7 @@ export class SubagentHandle {
                 '## Target Repository',
                 '',
                 `All file operations must use absolute paths under \`${this.repoRoot}\`.`,
+                'Keep all generated assets, code, test files, and scripts within the target repository workspace boundaries.',
                 '',
                 '## Prohibited Actions',
                 '',
@@ -158,7 +159,11 @@ export class SubagentHandle {
                             path: '.',
                         },
                     ],
-                    settings: {},
+                    settings: {
+                        'security.workspace.trust.enabled': false,
+                        'security.workspace.trust.startupPrompt': 'never',
+                        'security.workspace.trust.emptyWindow': true,
+                    },
                 };
                 fs.writeFileSync(this._workspaceFilePath, JSON.stringify(wsConfig, null, 2), 'utf-8');
             } catch (wsErr) {
@@ -491,11 +496,17 @@ export class SubagentHandle {
         const wsName = extractWorkspaceName(instance.title);
         const launchBase = path.basename(this._launchPath);
 
+        // Guard: Ignore titles that are just raw instruction file prompts unless workspace name exactly matches
+        const isInstructionPromptTitle = instance.title.startsWith('Read the following file') || instance.title.includes('instruction.json');
+        if (isInstructionPromptTitle && wsName.toLowerCase() !== this.name.toLowerCase() && wsName.toLowerCase() !== launchBase.toLowerCase()) {
+            return false;
+        }
+
         const checks = [
-            { label: 'wsName===name', result: wsName === this.name },
-            { label: 'wsName===launchBase', result: wsName === launchBase },
+            { label: 'wsName===name', result: wsName.toLowerCase() === this.name.toLowerCase() },
+            { label: 'wsName===launchBase', result: wsName.toLowerCase() === launchBase.toLowerCase() },
             { label: 'title.includes(launchPath)', result: instance.title.includes(this._launchPath) },
-            { label: 'title.includes(launchBase)', result: instance.title.includes(launchBase) },
+            { label: 'title.includes(bracketed)', result: instance.title.includes(`(${this.name})`) || instance.title.includes(`[${this.name}]`) },
         ];
 
         const matched = checks.some(c => c.result);

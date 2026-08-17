@@ -207,10 +207,12 @@ async function handleCancel(ctx: BridgeContext, interaction: ChatInputCommandInt
             ctx.executorPool?.forceStop(wsKey);
             logDebug(`handleCancel: /stop executed — workspace "${wsKey}" stopped`);
         } else {
-            // プールが空または未初期化: デフォルト executor のみ停止（後方互換）
+            // プールが空または未初期化: デフォルト executor および全プール停止（後方互換）
             execRunning = executor?.isRunning() || false;
+            poolRunning = ctx.executorPool?.isAnyRunning() || false;
             if (execRunning) { executor?.forceStop(); }
-            logDebug('handleCancel: /stop executed — default executor stopped (no pool entries)');
+            ctx.executorPool?.forceStopAll();
+            logDebug('handleCancel: /stop executed — all executors stopped');
         }
 
         // 連続オートモード停止（Executor 停止後にループも止める）

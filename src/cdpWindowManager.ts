@@ -93,14 +93,20 @@ export async function closeWindow(
             return false;
         }
 
-        // 2. Match by workspace name (4 strategies equivalent to matchesSubagent)
+        // 2. Match by workspace name (ensuring main window is never targeted)
+        const activeMainTargetId = conn?.getActiveTargetId();
         let targetInstance: DiscoveredInstance | undefined;
         for (const inst of instances) {
+            // Guard: Never select the active connected main window
+            if (activeMainTargetId && inst.id === activeMainTargetId) {
+                continue;
+            }
             const wsName = extractWorkspaceName(inst.title);
             const matches =
-                wsName === workspaceName ||
-                inst.title.includes(workspaceName) ||
-                inst.title.includes(path.basename(workspaceName));
+                wsName.toLowerCase() === workspaceName.toLowerCase() ||
+                wsName.toLowerCase() === path.basename(workspaceName).toLowerCase() ||
+                inst.title.includes(`Subagent (${workspaceName})`) ||
+                inst.title.includes(`[${workspaceName}]`);
             if (matches) {
                 targetInstance = inst;
                 logDebug(`[closeWindow] Match: wsName="${wsName}", title="${inst.title.substring(0, 80)}"`);
@@ -115,8 +121,12 @@ export async function closeWindow(
         }
 
         // 3. Guard against closing main window (currently connected)
+        if (activeMainTargetId && targetInstance.id === activeMainTargetId) {
+            logWarn(`[closeWindow] Target matches active main window (${activeMainTargetId}). Skipping close`);
+            return false;
+        }
         const currentWsName = conn ? extractWorkspaceName(conn.getActiveTargetTitle() ?? '') : null;
-        if (currentWsName === workspaceName) {
+        if (currentWsName && (currentWsName === workspaceName || currentWsName === path.basename(workspaceName))) {
             logWarn(`[closeWindow] Workspace "${workspaceName}" is the main window. Skipping close`);
             return false;
         }

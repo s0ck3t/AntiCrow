@@ -22,12 +22,14 @@ vi.mock('vscode', () => ({
 
 import {
     getResponseTimeout,
+    getInactivityTimeout,
     getTimezone,
     getArchiveDays,
     getAllowedUserIds,
     getMaxMessageLength,
     isUserAllowed,
     DEFAULT_RESPONSE_TIMEOUT_MS,
+    DEFAULT_INACTIVITY_TIMEOUT_MS,
     DEFAULT_TIMEZONE,
     DEFAULT_ARCHIVE_DAYS,
 } from '../configHelper';
@@ -166,4 +168,29 @@ describe('configHelper', () => {
         });
     });
 
+    // ----- getInactivityTimeout -----
+
+    describe('getInactivityTimeout', () => {
+        it('should return configured inactivity timeout', () => {
+            mockGet.mockImplementation((key: string) => {
+                if (key === 'inactivityTimeoutMs') { return 300000; }
+                return undefined;
+            });
+            expect(getInactivityTimeout()).toBe(300000);
+        });
+
+        it('should return default (15 min = 900000ms) when not configured', () => {
+            mockGet.mockReturnValue(undefined);
+            expect(getInactivityTimeout()).toBe(DEFAULT_INACTIVITY_TIMEOUT_MS);
+            expect(getInactivityTimeout()).toBe(900000);
+        });
+
+        it('should allow 0 as disabled (uses ?? not ||)', () => {
+            mockGet.mockImplementation((key: string) => {
+                if (key === 'inactivityTimeoutMs') { return 0; }
+                return undefined;
+            });
+            expect(getInactivityTimeout()).toBe(0);
+        });
+    });
 });

@@ -177,11 +177,43 @@ export function resetProcessingFlag(wsKey?: string): void {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 統合キャンセル機構（Executor / ExecutorPool 連携）
+// ---------------------------------------------------------------------------
+
+/** キャンセル可能な Executor インターフェース */
+export interface CancellableExecutor {
+    forceStop: () => void;
+    isRunning?: () => boolean;
+}
+
+/** キャンセル可能な ExecutorPool インターフェース */
+export interface CancellableExecutorPool {
+    forceStop: (wsKey: string) => boolean;
+    forceStopAll: () => void;
+    isRunning?: (wsKey: string) => boolean;
+}
+
+let registeredExecutor: CancellableExecutor | null = null;
+let registeredExecutorPool: CancellableExecutorPool | null = null;
+
 /**
- * Plan 生成をキャンセルする（/stop コマンド用）。
- * wsKey を指定すると対象ワークスペースのキュー状態のみクリア、
+ * キャンセル処理と連動させる Executor / ExecutorPool を登録する。
+ */
+export function registerExecutorForCancellation(
+    executor: CancellableExecutor | null,
+    executorPool: CancellableExecutorPool | null,
+): void {
+    registeredExecutor = executor;
+    registeredExecutorPool = executorPool;
+    logDebug('messageQueue: registered executor and executorPool for unified cancellation');
+}
+
+/**
+ * Plan 生成および実行中タスクをキャンセルする（/stop コマンド用）。
+ * wsKey を指定すると対象ワークスペースのキュー状態のみクリアおよび Executor 停止、
  * AbortController / typing / progress interval は全体に影響する（ワークスペース単位の分離は不可）。
- * wsKey 省略時は従来通り全クリア。
+ * wsKey 省略時は全ワークスペース一括クリアおよび全 Executor 停止。
  */
 export function cancelPlanGeneration(wsKey?: string): void {
     // AbortController と interval は全体共有リソースのため常に全クリア
@@ -209,6 +241,32 @@ export function cancelPlanGeneration(wsKey?: string): void {
         logDebug(`messageHandler: cleared ${activePlanProgressIntervals.size} plan progress interval(s)`);
         activePlanProgressIntervals.clear();
     }
+
+    // Executor / ExecutorPool の強制停止を伝播（ぶら下がり Promise・待機中のジョブを解消）
+    try {
+        if (wsKey) {
+            if (registeredExecutorPool) {
+                registeredExecutorPool.forceStop(wsKey);
+                logDebug(`messageHandler: executorPool forceStop invoked for "${wsKey}"`);
+            }
+            if (registeredExecutor) {
+                registeredExecutor.forceStop();
+                logDebug('messageHandler: executor forceStop invoked');
+            }
+        } else {
+            if (registeredExecutorPool) {
+                registeredExecutorPool.forceStopAll();
+                logDebug('messageHandler: executorPool forceStopAll invoked');
+            }
+            if (registeredExecutor) {
+                registeredExecutor.forceStop();
+                logDebug('messageHandler: executor forceStop invoked for all');
+            }
+        }
+    } catch (e) {
+        logError('messageHandler: error during executor cancellation propagation', e);
+    }
+
     // キュー状態のクリア（ワークスペース単位 or 全体）
     if (wsKey) {
         currentProcessingStatuses.delete(wsKey);

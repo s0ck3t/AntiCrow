@@ -58,6 +58,7 @@ export type { ProcessingStatus } from './messageQueue';
 export {
     resetProcessingFlag,
     cancelPlanGeneration,
+    registerExecutorForCancellation,
     getMessageQueueStatus,
     clearWaitingMessages,
     removeWaitingMessage,

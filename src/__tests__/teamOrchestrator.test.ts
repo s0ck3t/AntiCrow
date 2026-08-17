@@ -48,6 +48,17 @@ vi.mock('../embedHelper', () => ({
     buildEmbed: vi.fn(() => ({ toJSON: () => ({}) })),
 }));
 
+vi.mock('fs', () => ({
+    writeFileSync: vi.fn(),
+    readFileSync: vi.fn(() => '{}'),
+    existsSync: vi.fn(() => true),
+    mkdirSync: vi.fn(),
+    promises: {
+        readFile: vi.fn().mockResolvedValue('{}'),
+        writeFile: vi.fn().mockResolvedValue(undefined),
+    },
+}));
+
 vi.mock('../i18n', () => ({
     t: vi.fn((key: string) => key),
 }));
@@ -249,4 +260,39 @@ describe('TeamOrchestrator', () => {
             expect(result).toBeNull();
         });
     });
+
+    // -----------------------------------------------------------------------
+    // orchestrateTeam - failed spawns handling
+    // -----------------------------------------------------------------------
+
+    describe('orchestrateTeam - failed spawns handling', () => {
+        it('サブエージェント起動失敗時は待機せずに即座に失敗として結果を返す', async () => {
+            const mockManager = {
+                spawn: vi.fn().mockRejectedValue(new Error('Maximum concurrent limit (3) reached.')),
+                pauseHealthCheck: vi.fn(),
+                resumeHealthCheck: vi.fn(),
+                getAgent: vi.fn(),
+                enableWindowReuse: false,
+                killAll: vi.fn().mockResolvedValue(undefined),
+                cleanupStaleAgents: vi.fn().mockResolvedValue(0),
+            };
+
+            const orch = new TeamOrchestrator(
+                mockManager as any,
+                mockFileIpc,
+                mockDiscordSender,
+                'C:\\mock\\repo',
+            );
+
+            const instructions = [
+                { agentIndex: 1, requestId: 'req_test', task: 'Task 1', role: 'Agent 1' },
+            ];
+
+            const result = await orch.orchestrateTeam(instructions as any, 'channel-1');
+            expect(result.results).toHaveLength(1);
+            expect(result.results[0].success).toBe(false);
+            expect(result.results[0].response).toContain('Launch failed: Maximum concurrent limit (3) reached.');
+        });
+    });
 });
+

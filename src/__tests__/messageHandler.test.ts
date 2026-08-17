@@ -123,6 +123,7 @@ import {
     getMessageQueueStatus,
     resetProcessingFlag,
     cancelPlanGeneration,
+    registerExecutorForCancellation,
     enqueueMessage,
     handleDiscordMessage,
 } from '../messageHandler';
@@ -268,6 +269,35 @@ describe('messageHandler', () => {
             cancelPlanGeneration();
             const status = getMessageQueueStatus();
             expect(status.processing).toEqual([]);
+        });
+
+        it('should propagate cancellation to registered executor and executorPool when wsKey is specified', () => {
+            const mockExecutor = { forceStop: vi.fn() };
+            const mockExecutorPool = { forceStop: vi.fn().mockReturnValue(true), forceStopAll: vi.fn() };
+
+            registerExecutorForCancellation(mockExecutor, mockExecutorPool);
+
+            cancelPlanGeneration('workspace-a');
+
+            expect(mockExecutorPool.forceStop).toHaveBeenCalledWith('workspace-a');
+            expect(mockExecutor.forceStop).toHaveBeenCalled();
+            expect(mockExecutorPool.forceStopAll).not.toHaveBeenCalled();
+
+            registerExecutorForCancellation(null, null);
+        });
+
+        it('should propagate cancellation to registered executor and executorPool for all workspaces when wsKey is omitted', () => {
+            const mockExecutor = { forceStop: vi.fn() };
+            const mockExecutorPool = { forceStop: vi.fn(), forceStopAll: vi.fn() };
+
+            registerExecutorForCancellation(mockExecutor, mockExecutorPool);
+
+            cancelPlanGeneration();
+
+            expect(mockExecutorPool.forceStopAll).toHaveBeenCalled();
+            expect(mockExecutor.forceStop).toHaveBeenCalled();
+
+            registerExecutorForCancellation(null, null);
         });
     });
 
